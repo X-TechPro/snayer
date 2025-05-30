@@ -313,14 +313,9 @@
       const forward10Btn = document.getElementById("forward-10");
       const spinnerOverlay = document.getElementById("spinner-overlay");
 
-      // --- Dynamic video source selection for MP4 and HLS ---
-      // Use injected 'source' variable if present, otherwise fetch from /config
+      // --- General video source selection for MP4 and HLS ---
       (async () => {
-        let source = typeof window !== 'undefined' && window.source ? window.source : null;
-        if (!source && typeof window !== 'undefined' && typeof window.__PLAYER_TITLE__ !== 'undefined') {
-          // fallback: try to get from global
-          source = window.source;
-        }
+        let source = window.source;
         if (!source) {
           try {
             const config = await fetch('/config').then(r => r.json());
@@ -329,10 +324,7 @@
         }
         if (!source) return;
         const isM3U8 = source.endsWith('.m3u8');
-        const proxyUrl = url => `/stream?url=${encodeURIComponent(url)}`;
-        const url = proxyUrl(source);
         function setVideoSource(url) {
-          // Remove all <source> children if any
           while (video.firstChild) video.removeChild(video.firstChild);
           video.removeAttribute('src');
           if (isM3U8) {
@@ -354,7 +346,7 @@
           }
           seekbar.value = 0;
         }
-        setVideoSource(url);
+        setVideoSource(source);
       })();
 
       function formatTime(t) {

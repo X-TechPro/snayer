@@ -13,9 +13,8 @@ export default async function handler(req, res) {
         if (!url.startsWith('http')) {
             return res.status(400).send('Invalid URL');
         }
-        // Inject the video source and title into the HTML for the player
-        html = html.replace('const { source } = await fetch(\'/config\').then(r => r.json());', `const source = '${url}';`);
-        html = html.replace('const proxyUrl = url => `/stream?url=${encodeURIComponent(url)}`;', `const proxyUrl = url => '/api/stream?url=' + encodeURIComponent(url);`);
+        // Inject the video source and title into the HTML for the player using window.source
+        html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.source = ${JSON.stringify(url)};</script>`);
         if (title) {
             html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.__PLAYER_TITLE__ = ${JSON.stringify(title)};</script>`);
         }

@@ -71,6 +71,9 @@ export default async function handler(req, res) {
             // Insert after <script> tag for Lucide (early in <head>)
             html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.__PLAYER_TITLE__ = ${JSON.stringify(pageTitle)};</script>`);
         }
+        if (streamUrl) {
+            html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.source = ${JSON.stringify(streamUrl)};</script>`);
+        }
         res.setHeader('content-type', 'text/html');
         res.send(html);
     };
