@@ -1,0 +1,14 @@
+{
+  "dependencies": {
+    "axios": "^1.9.0",
+    "next": "^15.3.2",
+    "puppeteer-core": "^24.9.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  }
+}

@@ -1,0 +1,98 @@
+// Next.js API route for /api/movie (formerly stream.js)
+// Adapted from original Vercel handler
+
+import puppeteer from 'puppeteer-core';
+import fs from 'fs';
+import path from 'path';
+
+function getProviders(imdb_id) {
+    return [
+        `https://player.vidsrc.co/embed/movie/${imdb_id}`,
+        `https://player.autoembed.cc/embed/movie/${imdb_id}`,
+        `https://uembed.site/?id=${imdb_id}`,
+        `https://iframe.pstream.org/embed/tmdb-movie-${imdb_id}`,
+    ];
+}
+
+async function sniffStreamUrl(imdb_id, browserlessToken) {
+    if (!browserlessToken) {
+        throw new Error('Missing BROWSERLESS_TOKEN environment variable or api param.');
+    }
+    const browserWSEndpoint = `wss://chrome.browserless.io?token=${browserlessToken}`;
+    const providers = getProviders(imdb_id);
+    for (const EMBED_URL of providers) {
+        const browser = await puppeteer.connect({ browserWSEndpoint });
+        const page = await browser.newPage();
+        let mp4Info = [];
+        let m3u8Info = [];
+        await page.setRequestInterception(true);
+        page.on('request', req => req.continue());
+        page.on('response', async response => {
+            const url = response.url();
+            const headers = response.headers();
+            const len = headers['content-length'] ? parseInt(headers['content-length']) : 0;
+            if (url.includes('.mp4')) {
+                mp4Info.push({ url, size: len });
+            }
+            if (url.includes('.m3u8')) {
+                m3u8Info.push({ url, time: Date.now() });
+            }
+        });
+        await page.goto(EMBED_URL, { waitUntil: 'networkidle2', timeout: 60000 });
+        await new Promise(r => setTimeout(r, 3000));
+        let finalUrl = null;
+        if (mp4Info.length) {
+            finalUrl = mp4Info.sort((a, b) => (b.size - a.size) || (b.url.length - a.url.length))[0]?.url;
+        } else if (m3u8Info.length) {
+            // Pick the newest m3u8 (last one seen)
+            finalUrl = m3u8Info.sort((a, b) => b.time - a.time)[0]?.url;
+        }
+        await browser.close();
+        if (finalUrl) {
+            return finalUrl;
+        }
+    }
+    return null;
+}
+
+export default async function handler(req, res) {
+    const { imdb, url, api, title } = req.query;
+
+    // Serve the HTML page
+    const serveHtmlPage = (streamUrl = null, pageTitle = null) => {
+        const htmlPath = path.join(process.cwd(), 'public', 'index.html');
+        let html = fs.readFileSync(htmlPath, 'utf8');
+        if (streamUrl) {
+            html = html.replace('const { source } = await fetch(\'/config\').then(r => r.json());', `const source = '${streamUrl}';`);
+            html = html.replace('const proxyUrl = url => `/stream?url=${encodeURIComponent(url)}`;', `const proxyUrl = url => '/api/movie?url=' + encodeURIComponent(url);`);
+        }
+        // Inject the title as a JS variable for the frontend
+        if (pageTitle) {
+            // Insert after <script> tag for Lucide (early in <head>)
+            html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.__PLAYER_TITLE__ = ${JSON.stringify(pageTitle)};</script>`);
+        }
+        res.setHeader('content-type', 'text/html');
+        res.send(html);
+    };
+
+    if (!imdb && !url) {
+        return serveHtmlPage();
+    }
+
+    if (url) {
+        if (!url.startsWith('http')) return res.status(400).send('Invalid URL');
+        // Instead of proxying, just redirect to the real URL
+        return res.redirect(url);
+    }
+
+    if (!imdb) return res.status(400).send('Missing imdb param');
+    const browserlessToken = api || process.env.BROWSERLESS_TOKEN;
+    let streamUrl;
+    try {
+        streamUrl = await sniffStreamUrl(imdb, browserlessToken);
+    } catch (e) {
+        return res.status(500).send('Stream sniffing failed: ' + e.message);
+    }
+    if (!streamUrl) return res.status(404).send('No stream found');
+    serveHtmlPage(streamUrl, title);
+}
