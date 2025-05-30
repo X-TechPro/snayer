@@ -39,8 +39,15 @@ export default async function handler(req, res) {
     // If ?raw=1, stream the video file from the remote url
     if (req.query.raw === '1') {
         const client = url.startsWith('https') ? https : http;
-        client.get(url, (streamRes) => {
-            // Forward headers for range requests
+        const options = {
+            headers: {}
+        };
+        // Forward the range header if present (for seeking)
+        if (req.headers.range) {
+            options.headers['Range'] = req.headers.range;
+        }
+        client.get(url, options, (streamRes) => {
+            // Forward status and headers (especially for range/partial content)
             res.writeHead(streamRes.statusCode, streamRes.headers);
             streamRes.pipe(res);
         }).on('error', (err) => {
