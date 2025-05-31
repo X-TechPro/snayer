@@ -1,25 +1,25 @@
-// Next.js API route for /api/movie
+// Next.js API route for /api/tv
 // Adapted from original Vercel handler
 
 import puppeteer from 'puppeteer-core';
 import fs from 'fs';
 import path from 'path';
 
-function getProviders(imdb_id) {
+function getProviders(imdb_id, season, episode) {
     return [
-        `https://player.vidsrc.co/embed/movie/${imdb_id}`,
-        `https://player.autoembed.cc/embed/movie/${imdb_id}`,
-        `https://uembed.site/?id=${imdb_id}`,
-        `https://iframe.pstream.org/embed/tmdb-movie-${imdb_id}`,
+        `https://player.vidsrc.co/embed/tv/${imdb_id}/${season}/${episode}`,
+        `https://player.autoembed.cc/embed/tv/${imdb_id}/${season}/${episode}`,
+        `https://uembed.site/?id=${imdb_id}&season=${season}&episode=${episode}`,
+        `https://iframe.pstream.org/embed/tmdb-tv-${imdb_id}/${season}/${episode}`,
     ];
 }
 
-async function sniffStreamUrl(imdb_id, browserlessToken) {
+async function sniffStreamUrl(imdb_id, season, episode, browserlessToken) {
     if (!browserlessToken) {
         throw new Error('Missing BROWSERLESS_TOKEN environment variable or api param.');
     }
     const browserWSEndpoint = `wss://chrome.browserless.io?token=${browserlessToken}`;
-    const providers = getProviders(imdb_id);
+    const providers = getProviders(imdb_id, season, episode);
     for (const EMBED_URL of providers) {
         const browser = await puppeteer.connect({ browserWSEndpoint });
         const page = await browser.newPage();
@@ -56,7 +56,7 @@ async function sniffStreamUrl(imdb_id, browserlessToken) {
 }
 
 export default async function handler(req, res) {
-    const { imdb, api, title } = req.query;
+    const { imdb, api, title, s, e } = req.query;
 
     // Serve the HTML page
     const serveHtmlPage = (streamUrl = null, pageTitle = null) => {
@@ -84,9 +84,12 @@ export default async function handler(req, res) {
 
     if (!imdb) return res.status(400).send('Missing imdb param');
     const browserlessToken = api || process.env.BROWSERLESS_TOKEN;
+    // Parse season and episode, default to 1 if not provided
+    const season = s ? parseInt(s, 10) : 1;
+    const episode = e ? parseInt(e, 10) : 1;
     let streamUrl;
     try {
-        streamUrl = await sniffStreamUrl(imdb, browserlessToken);
+        streamUrl = await sniffStreamUrl(imdb, season, episode, browserlessToken);
     } catch (e) {
         return res.status(500).send('Stream sniffing failed: ' + e.message);
     }
