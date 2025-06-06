@@ -748,6 +748,8 @@
       subtitleDisplay.style.backdropFilter = 'blur(6px)';
       subtitleDisplay.style.borderRadius = '0.5em';
       subtitleDisplay.style.padding = '0.2em 1em';
+      subtitleDisplay.style.minWidth = '0';
+      subtitleDisplay.style.minHeight = '0';
       document.getElementById('player-container').appendChild(subtitleDisplay);
 
       // Helper: Parse SRT to cues (no regex literals)
@@ -783,18 +785,7 @@
         return h * 3600 + m * 60 + sec + ms / 1000;
       }
 
-      // Group subtitles by language for compression
-      function groupSubtitles(subs) {
-        const groups = {};
-        subs.forEach((sub, i) => {
-          const lang = (sub.label || sub.display || sub.language || sub.format || '').toLowerCase();
-          if (!groups[lang]) groups[lang] = [];
-          groups[lang].push({ ...sub, _index: i });
-        });
-        return groups;
-      }
-
-      // Render subtitle menu (with compression, fixed height, click-to-open)
+      // Render subtitle menu (no compression, just first subtitle per language)
       let subtitleMenuOpen = false;
       let subtitleMenuBtn = null;
       let subtitleMenuDiv = null;
@@ -828,52 +819,19 @@
         off.textContent = 'Off';
         off.onclick = function(e) { e.preventDefault(); selectSubtitle(null); closeSubtitleMenu(); };
         subtitleMenuDiv.appendChild(off);
-        // Group and compress
-        const groups = groupSubtitles(subtitleList);
-        Object.keys(groups).forEach(lang => {
-          if (groups[lang].length === 1) {
-            // Single: show as normal
-            const sub = groups[lang][0];
-            var a = document.createElement('a');
-            a.className = 'block px-2 py-1 hover:bg-white/10 rounded';
-            a.href = '#';
-            a.textContent = sub.label || sub.display || sub.language || sub.format || ('Subtitle ' + (sub._index+1));
-            a.onclick = function(e) { e.preventDefault(); selectSubtitle(sub); closeSubtitleMenu(); };
-            subtitleMenuDiv.appendChild(a);
-          } else {
-            // Multiple: show parent, expand on click
-            var parent = document.createElement('div');
-            parent.className = 'block px-2 py-1 hover:bg-white/10 rounded cursor-pointer';
-            parent.style.position = 'relative';
-            parent.textContent = capitalize(lang);
-            var expand = document.createElement('div');
-            expand.style.display = 'none';
-            expand.style.position = 'absolute';
-            expand.style.left = '100%';
-            expand.style.top = '0';
-            expand.style.background = 'rgba(0,0,0,0.95)';
-            expand.style.backdropFilter = 'blur(8px)';
-            expand.style.borderRadius = '0.5em';
-            expand.style.boxShadow = '0 4px 24px #0008';
-            expand.style.minWidth = '120px';
-            expand.style.zIndex = '101';
-            groups[lang].forEach((sub, idx) => {
-              var a = document.createElement('a');
-              a.className = 'block px-2 py-1 hover:bg-white/10 rounded';
-              a.href = '#';
-              a.textContent = capitalize(lang) + ' ' + (idx+1);
-              a.onclick = function(e) { e.preventDefault(); selectSubtitle(sub); closeSubtitleMenu(); };
-              expand.appendChild(a);
-            });
-            parent.appendChild(expand);
-            parent.addEventListener('mouseenter', () => { expand.style.display = 'block'; });
-            parent.addEventListener('mouseleave', () => { expand.style.display = 'none'; });
-            subtitleMenuDiv.appendChild(parent);
-          }
+        // Only take the first subtitle for each language
+        const seenLangs = {};
+        subtitleList.forEach(function(sub, i) {
+          const lang = (sub.label || sub.display || sub.language || sub.format || '').toLowerCase();
+          if (seenLangs[lang]) return;
+          seenLangs[lang] = true;
+          var a = document.createElement('a');
+          a.className = 'block px-2 py-1 hover:bg-white/10 rounded';
+          a.href = '#';
+          a.textContent = sub.label || sub.display || sub.language || sub.format || ('Subtitle ' + (i+1));
+          a.onclick = function(e) { e.preventDefault(); selectSubtitle(sub); closeSubtitleMenu(); };
+          subtitleMenuDiv.appendChild(a);
         });
-      }
-      function capitalize(str) {
-        return str.charAt(0).toUpperCase() + str.slice(1);
       }
       function openSubtitleMenu() {
         if (!subtitleMenuDiv) return;
@@ -925,7 +883,14 @@
       }
       // Show subtitle for current time
       video.addEventListener('timeupdate', function() {
-        if (!subtitleCues.length) { subtitleDisplay.innerHTML = ''; return; }
+        if (!subtitleCues.length) {
+          subtitleDisplay.innerHTML = '';
+          subtitleDisplay.style.background = 'none';
+          subtitleDisplay.style.backdropFilter = 'none';
+          subtitleDisplay.style.borderRadius = '0';
+          subtitleDisplay.style.padding = '0';
+          return;
+        }
         var t = video.currentTime;
         var cue = null;
         for (var i = 0; i < subtitleCues.length; i++) {
@@ -934,10 +899,20 @@
             break;
           }
         }
-        subtitleDisplay.innerHTML = cue ? cue.text : '';
+        if (cue && cue.text && cue.text.trim() !== '') {
+          subtitleDisplay.innerHTML = cue.text;
+          subtitleDisplay.style.background = 'rgba(0,0,0,0.35)';
+          subtitleDisplay.style.backdropFilter = 'blur(6px)';
+          subtitleDisplay.style.borderRadius = '0.5em';
+          subtitleDisplay.style.padding = '0.2em 1em';
+        } else {
+          subtitleDisplay.innerHTML = '';
+          subtitleDisplay.style.background = 'none';
+          subtitleDisplay.style.backdropFilter = 'none';
+          subtitleDisplay.style.borderRadius = '0';
+          subtitleDisplay.style.padding = '0';
+        }
       });
-      // Render menu on DOMContentLoaded
-      document.addEventListener('DOMContentLoaded', renderSubtitleMenu);
     </script>
     <style>
       /* Seek overlay for swipe/double-tap feedback */
