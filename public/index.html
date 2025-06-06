@@ -755,15 +755,27 @@
       // Responsive font size for mobile
       function updateSubtitleFontSize() {
         const vw = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
-        if (vw <= 400) {
+        const vh = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);
+        // Consider phone if width <= 900px
+        const isPhone = vw <= 900;
+        const isLandscape = vw > vh;
+        if (isPhone && isLandscape) {
+          // Landscape on phone: make subtitles even smaller
+          subtitleDisplay.style.fontSize = '0.7em';
+          subtitleDisplay.style.padding = '0.08em 0.2em';
+          subtitleDisplay.style.maxWidth = '90vw';
+        } else if (vw <= 400) {
           subtitleDisplay.style.fontSize = '0.85em';
           subtitleDisplay.style.padding = '0.1em 0.3em';
+          subtitleDisplay.style.maxWidth = '96vw';
         } else if (vw <= 600) {
           subtitleDisplay.style.fontSize = '1em';
           subtitleDisplay.style.padding = '0.15em 0.5em';
+          subtitleDisplay.style.maxWidth = '96vw';
         } else {
           subtitleDisplay.style.fontSize = '1.5em';
           subtitleDisplay.style.padding = '0.2em 1em';
+          subtitleDisplay.style.maxWidth = '96vw';
         }
       }
       window.addEventListener('resize', updateSubtitleFontSize);
