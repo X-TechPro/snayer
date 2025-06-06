@@ -14,7 +14,7 @@ function getProviders(tmdb_id) {
     ];
 }
 
-async function sniffStreamUrl(tmdb_id, browserlessToken) {
+export async function sniffStreamUrl(tmdb_id, browserlessToken) {
     if (!browserlessToken) {
         throw new Error('Missing BROWSERLESS_TOKEN environment variable or api param.');
     }
@@ -58,7 +58,7 @@ async function sniffStreamUrl(tmdb_id, browserlessToken) {
 }
 
 export default async function handler(req, res) {
-    const { tmdb, api, title, sniff } = req.query;
+    const { tmdb, api, title } = req.query;
 
     // Serve the HTML page
     const serveHtmlPage = (streamUrl = null, pageTitle = null) => {
@@ -67,15 +67,70 @@ export default async function handler(req, res) {
         // Inject Tailwind loading overlay and script
         const loadingOverlay = `\n<div id=\"loading-overlay\" class=\"fixed inset-0 flex items-center justify-center bg-black bg-opacity-80 z-50\">\n  <div class=\"flex flex-col items-center\">\n    <svg class=\"animate-spin h-12 w-12 text-white mb-4\" xmlns=\"http://www.w3.org/2000/svg\" fill=\"none\" viewBox=\"0 0 24 24\"><circle class=\"opacity-25\" cx=\"12\" cy=\"12\" r=\"10\" stroke=\"currentColor\" stroke-width=\"4\"></circle><path class=\"opacity-75\" fill=\"currentColor\" d=\"M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z\"></path></svg>\n    <span class=\"text-white text-lg font-semibold\">Sniffing for stream providers... Please wait</span>\n  </div>\n</div>\n<script>\n(function() {\n  function hideOverlay() {\n    const overlay = document.getElementById('loading-overlay');\n    if (overlay) overlay.style.display = 'none';\n  }\n  if (window.source) {\n    hideOverlay();\n  } else {\n    const observer = new MutationObserver(() => {\n      if (window.source) {\n        hideOverlay();\n        observer.disconnect();\n      }\n    });\n    observer.observe(document.documentElement, { subtree: true, childList: true });\n    window.addEventListener('source-ready', hideOverlay);\n  }\n})();\n</script>\n`;
         html = html.replace('<body>', `<body>\n${loadingOverlay}`);
-        // Remove streamUrl injection, always let frontend fetch it
-        html = html.replace('const { source } = await fetch(\'/config\').then(r => r.json());', 'let source = null;');
-        html = html.replace('const proxyUrl = url => `/stream?url=${encodeURIComponent(url)}`;', 'const proxyUrl = url => "/api/movie?url=" + encodeURIComponent(url);');
-        // Inject the title as a JS variable for the frontend
-        if (pageTitle) {
-            html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.__PLAYER_TITLE__ = ${JSON.stringify(pageTitle)};</script>`);
+        if (streamUrl) {
+            html = html.replace('const { source } = await fetch(\'/config\').then(r => r.json());', `const source = '${streamUrl}';`);
+            html = html.replace('const proxyUrl = url => `/stream?url=${encodeURIComponent(url)}`;', `const proxyUrl = url => '/api/movie?url=' + encodeURIComponent(url);`);
         }
-        // Inject script to fetch stream after page load
-        html = html.replace('</body>', `\n<script>\n(async function() {\n  const urlParams = new URLSearchParams(window.location.search);\n  const tmdb = urlParams.get('tmdb');\n  const title = urlParams.get('title');\n  if (tmdb) {\n    try {\n      const sniffUrl = '/api/movie?tmdb=' + encodeURIComponent(tmdb) + (title ? '&title=' + encodeURIComponent(title) : '') + '&sniff=1';\n      const resp = await fetch(sniffUrl);\n      if (resp.ok) {\n        const data = await resp.json();\n        if (data && data.streamUrl) {\n          window.source = data.streamUrl;\n          window.dispatchEvent(new Event('source-ready'));\n        } else {\n          window.source = null;\n          window.dispatchEvent(new Event('source-ready'));\n        }\n      } else {\n        window.source = null;\n        window.dispatchEvent(new Event('source-ready'));\n      }\n    } catch (e) {\n      window.source = null;\n      window.dispatchEvent(new Event('source-ready'));\n    }\n  }\n})();\n</script>\n</body>`);
+        // Inject the title and sniffing logic
+        const sniffScript = `
+            <script>
+                // Set the title if provided
+                ${pageTitle ? `window.__PLAYER_TITLE__ = ${JSON.stringify(pageTitle)};` : ''}
+                
+                // Function to start sniffing
+                async function startSniffing() {
+                    try {
+                        const response = await fetch('/api/sniff?tmdb=${encodeURIComponent(tmdb)}${api ? '&api=' + encodeURIComponent(api) : ''}${title ? '&title=' + encodeURIComponent(title) : ''}');
+                        if (!response.ok) throw new Error('Sniffing failed');
+                        
+                        const { streamUrl } = await response.json();
+                        if (streamUrl) {
+                            window.source = streamUrl;
+                            window.dispatchEvent(new Event('source-ready'));
+                        } else {
+                            throw new Error('No stream found');
+                        }
+                    } catch (error) {
+                        console.error('Sniffing error:', error);
+                        const overlay = document.getElementById('loading-overlay');
+                        if (overlay) {
+                            const errorMessage = error.message || 'Please try again later';
+                            overlay.innerHTML = [
+                                '<div class="flex flex-col items-center">',
+                                '  <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-red-500">',
+                                '    <circle cx="12" cy="12" r="10"></circle>',
+                                '    <line x1="12" y1="8" x2="12" y2="12"></line>',
+                                '    <line x1="12" y1="16" x2="12.01" y2="16"></line>',
+                                '  </svg>',
+                                '  <span class="text-white text-lg font-semibold mt-4">Failed to load stream</span>',
+                                '  <p class="text-gray-300 mt-2">' + errorMessage + '</p>',
+                                '  <button onclick="window.location.reload()" class="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition-colors">',
+                                '    Retry',
+                                '  </button>',
+                                '</div>'
+                            ].join('\n');
+                        }
+                    }
+                }
+
+                // Start sniffing when the page is fully loaded
+                if (document.readyState === 'loading') {
+                    document.addEventListener('DOMContentLoaded', startSniffing);
+                } else {
+                    startSniffing();
+                }
+            </script>
+        `;
+        
+        // Insert the sniffing script after Lucide
+        html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', 
+            `<script src="https://unpkg.com/lucide@latest"></script>\n${sniffScript}`);
+            
+        // If we already have a stream URL, set it directly
+        if (streamUrl) {
+            html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', 
+                `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.source = ${JSON.stringify(streamUrl)};window.dispatchEvent(new Event('source-ready'));</script>`);
+        }
         res.setHeader('content-type', 'text/html');
         res.send(html);
     };
@@ -84,19 +139,15 @@ export default async function handler(req, res) {
         return serveHtmlPage();
     }
 
-    if (sniff === '1') {
-        // Only sniff and return JSON
-        const browserlessToken = api || process.env.BROWSERLESS_TOKEN;
-        let streamUrl;
-        try {
-            streamUrl = await sniffStreamUrl(tmdb, browserlessToken);
-        } catch (e) {
-            return res.status(500).json({ error: 'Stream sniffing failed: ' + e.message });
-        }
-        if (!streamUrl) return res.status(404).json({ error: 'No stream found' });
-        return res.json({ streamUrl });
+    if (!tmdb) return res.status(400).send('Missing tmdb param');
+    const browserlessToken = api || process.env.BROWSERLESS_TOKEN;
+    console.log('browserlessToken:', browserlessToken);
+    let streamUrl;
+    try {
+        streamUrl = await sniffStreamUrl(tmdb, browserlessToken);
+    } catch (e) {
+        return res.status(500).send('Stream sniffing failed: ' + e.message);
     }
-
-    // Default: serve HTML page (no sniffing yet)
-    serveHtmlPage(null, title);
+    if (!streamUrl) return res.status(404).send('No stream found');
+    serveHtmlPage(streamUrl, title);
 }
