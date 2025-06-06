@@ -4,6 +4,7 @@
 import puppeteer from 'puppeteer-core';
 import fs from 'fs';
 import path from 'path';
+import fetch from 'node-fetch';
 
 function getProviders(tmdb_id) {
     return [
@@ -14,7 +15,7 @@ function getProviders(tmdb_id) {
     ];
 }
 
-export async function sniffStreamUrl(tmdb_id, browserlessToken) {
+async function sniffStreamUrl(tmdb_id, browserlessToken) {
     if (!browserlessToken) {
         throw new Error('Missing BROWSERLESS_TOKEN environment variable or api param.');
     }
@@ -60,6 +61,19 @@ export async function sniffStreamUrl(tmdb_id, browserlessToken) {
 export default async function handler(req, res) {
     const { tmdb, api, title } = req.query;
 
+    // Fetch subtitles from madplay.site
+    let subtitles = [];
+    if (tmdb) {
+        try {
+            const subRes = await fetch(`https://madplay.site/api/subtitle?id=${tmdb}`);
+            if (subRes.ok) {
+                subtitles = await subRes.json();
+            }
+        } catch (e) {
+            // ignore subtitle errors
+        }
+    }
+
     // Serve the HTML page
     const serveHtmlPage = (streamUrl = null, pageTitle = null) => {
         const htmlPath = path.join(process.cwd(), 'public', 'index.html');
@@ -71,66 +85,16 @@ export default async function handler(req, res) {
             html = html.replace('const { source } = await fetch(\'/config\').then(r => r.json());', `const source = '${streamUrl}';`);
             html = html.replace('const proxyUrl = url => `/stream?url=${encodeURIComponent(url)}`;', `const proxyUrl = url => '/api/movie?url=' + encodeURIComponent(url);`);
         }
-        // Inject the title and sniffing logic
-        const sniffScript = `
-            <script>
-                // Set the title if provided
-                ${pageTitle ? `window.__PLAYER_TITLE__ = ${JSON.stringify(pageTitle)};` : ''}
-                
-                // Function to start sniffing
-                async function startSniffing() {
-                    try {
-                        const response = await fetch('/api/sniff?tmdb=${encodeURIComponent(tmdb)}${api ? '&api=' + encodeURIComponent(api) : ''}${title ? '&title=' + encodeURIComponent(title) : ''}');
-                        if (!response.ok) throw new Error('Sniffing failed');
-                        
-                        const { streamUrl } = await response.json();
-                        if (streamUrl) {
-                            window.source = streamUrl;
-                            window.dispatchEvent(new Event('source-ready'));
-                        } else {
-                            throw new Error('No stream found');
-                        }
-                    } catch (error) {
-                        console.error('Sniffing error:', error);
-                        const overlay = document.getElementById('loading-overlay');
-                        if (overlay) {
-                            const errorMessage = error.message || 'Please try again later';
-                            overlay.innerHTML = [
-                                '<div class="flex flex-col items-center">',
-                                '  <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-red-500">',
-                                '    <circle cx="12" cy="12" r="10"></circle>',
-                                '    <line x1="12" y1="8" x2="12" y2="12"></line>',
-                                '    <line x1="12" y1="16" x2="12.01" y2="16"></line>',
-                                '  </svg>',
-                                '  <span class="text-white text-lg font-semibold mt-4">Failed to load stream</span>',
-                                '  <p class="text-gray-300 mt-2">' + errorMessage + '</p>',
-                                '  <button onclick="window.location.reload()" class="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition-colors">',
-                                '    Retry',
-                                '  </button>',
-                                '</div>'
-                            ].join('\n');
-                        }
-                    }
-                }
-
-                // Start sniffing when the page is fully loaded
-                if (document.readyState === 'loading') {
-                    document.addEventListener('DOMContentLoaded', startSniffing);
-                } else {
-                    startSniffing();
-                }
-            </script>
-        `;
-        
-        // Insert the sniffing script after Lucide
-        html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', 
-            `<script src="https://unpkg.com/lucide@latest"></script>\n${sniffScript}`);
-            
-        // If we already have a stream URL, set it directly
-        if (streamUrl) {
-            html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', 
-                `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.source = ${JSON.stringify(streamUrl)};window.dispatchEvent(new Event('source-ready'));</script>`);
+        // Inject the title as a JS variable for the frontend
+        if (pageTitle) {
+            // Insert after <script> tag for Lucide (early in <head>)
+            html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.__PLAYER_TITLE__ = ${JSON.stringify(pageTitle)};</script>`);
         }
+        if (streamUrl) {
+            html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.source = ${JSON.stringify(streamUrl)};window.dispatchEvent(new Event('source-ready'));</script>`);
+        }
+        // Inject subtitles as a JS variable
+        html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.__SUBTITLES__ = ${JSON.stringify(subtitles)};</script>`);
         res.setHeader('content-type', 'text/html');
         res.send(html);
     };

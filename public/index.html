@@ -265,7 +265,7 @@
           </div>
 
           <div class="flex items-center space-x-3">
-            <!-- subtitles 
+            <!-- subtitles  -->
             <button class="text-white hover:text-[#0099ff] transition-all relative group">
               <i data-lucide="message-square" class="lucide w-6 h-6"></i>
               <div class="absolute bottom-full right-1/2 translate-x-1/2 mb-2 w-40 bg-black/80 backdrop-blur-sm
@@ -276,7 +276,7 @@
                 <a class="block px-2 py-1 hover:bg-white/10 rounded bg-white/10 text-[#0099ff]" href="#">English</a>
                 <a class="block px-2 py-1 hover:bg-white/10 rounded" href="#">Español</a>
               </div>
-            </button> -->
+            </button>
 
             <!-- settings -->
             <button class="text-white hover:text-[#0099ff] transition-all">
@@ -726,6 +726,101 @@
       // Init
       updateVolumeSeekbarUI();
       // --- End Custom Volume Seekbar Logic ---
+
+      // --- Subtitle Logic ---
+      let subtitleList = Array.isArray(window.__SUBTITLES__) ? window.__SUBTITLES__ : [];
+      let currentSubtitle = null;
+      let subtitleCues = [];
+      let subtitleDisplay = document.createElement('div');
+      subtitleDisplay.style.position = 'absolute';
+      subtitleDisplay.style.left = '50%';
+      subtitleDisplay.style.bottom = '12%';
+      subtitleDisplay.style.transform = 'translateX(-50%)';
+      subtitleDisplay.style.color = '#fff';
+      subtitleDisplay.style.fontSize = '1.5em';
+      subtitleDisplay.style.textShadow = '0 2px 8px #000, 0 0 2px #000';
+      subtitleDisplay.style.textAlign = 'center';
+      subtitleDisplay.style.pointerEvents = 'none';
+      subtitleDisplay.style.zIndex = '40';
+      subtitleDisplay.id = 'subtitle-display';
+      document.getElementById('player-container').appendChild(subtitleDisplay);
+
+      // Helper: Parse SRT to cues (no regex literals)
+      function parseSRT(srt) {
+        // Split by double newlines, then parse each block
+        var blocks = srt.replace(/\r/g, '').split(/\n\n+/);
+        var cues = [];
+        for (var i = 0; i < blocks.length; i++) {
+          var lines = blocks[i].split('\n');
+          if (lines.length >= 2) {
+            var timeLine = lines[1];
+            var timeMatch = timeLine && timeLine.indexOf('-->') !== -1 ? timeLine.split('-->') : null;
+            if (timeMatch && timeMatch.length === 2) {
+              var start = toSeconds(timeMatch[0].trim());
+              var end = toSeconds(timeMatch[1].trim());
+              var text = lines.slice(2).join('<br>');
+              cues.push({ start: start, end: end, text: text });
+            }
+          }
+        }
+        return cues;
+      }
+      function toSeconds(time) {
+        // 00:00:01,000 or 00:00:01.000
+        var t = time.replace(',', '.').split(':');
+        var s = t[2] ? t[2].split('.') : ['0', '0'];
+        var h = parseInt(t[0], 10) || 0;
+        var m = parseInt(t[1], 10) || 0;
+        var sec = parseInt(s[0], 10) || 0;
+        var ms = parseInt(s[1], 10) || 0;
+        return h * 3600 + m * 60 + sec + ms / 1000;
+      }
+      // Render subtitle menu
+      function renderSubtitleMenu() {
+        var btn = document.querySelector('.group .lucide-message-square').parentElement;
+        var menu = btn.querySelector('div');
+        menu.innerHTML = '<p class="font-semibold mb-1 px-2">Subtitles</p>';
+        var off = document.createElement('a');
+        off.className = 'block px-2 py-1 hover:bg-white/10 rounded';
+        off.href = '#';
+        off.textContent = 'Off';
+        off.onclick = function(e) { e.preventDefault(); selectSubtitle(null); };
+        menu.appendChild(off);
+        subtitleList.forEach(function(sub, i) {
+          var a = document.createElement('a');
+          a.className = 'block px-2 py-1 hover:bg-white/10 rounded';
+          a.href = '#';
+          a.textContent = sub.label || sub.display || sub.language || sub.format || ('Subtitle ' + (i+1));
+          a.onclick = function(e) { e.preventDefault(); selectSubtitle(sub); };
+          menu.appendChild(a);
+        });
+      }
+      function selectSubtitle(sub) {
+        currentSubtitle = sub;
+        subtitleCues = [];
+        subtitleDisplay.innerHTML = '';
+        if (!sub) return;
+        var url = sub.file || sub.url;
+        if (!url) return;
+        fetch(url).then(function(r) { return r.text(); }).then(function(srt) {
+          subtitleCues = parseSRT(srt);
+        });
+      }
+      // Show subtitle for current time
+      video.addEventListener('timeupdate', function() {
+        if (!subtitleCues.length) { subtitleDisplay.innerHTML = ''; return; }
+        var t = video.currentTime;
+        var cue = null;
+        for (var i = 0; i < subtitleCues.length; i++) {
+          if (t >= subtitleCues[i].start && t <= subtitleCues[i].end) {
+            cue = subtitleCues[i];
+            break;
+          }
+        }
+        subtitleDisplay.innerHTML = cue ? cue.text : '';
+      });
+      // Render menu on DOMContentLoaded
+      document.addEventListener('DOMContentLoaded', renderSubtitleMenu);
     </script>
     <style>
       /* Seek overlay for swipe/double-tap feedback */
