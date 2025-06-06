@@ -958,8 +958,25 @@
         const seekOverlay = document.getElementById('seek-overlay');
         let touchStartX = 0, touchStartY = 0, lastSeek = 0, seeking = false, seekTimeout;
         let lastTap = 0, tapX = 0;
+        // --- Helper: ensure overlay is visible in fullscreen ---
+        function updateSeekOverlayParent() {
+          // Always append to the fullscreen element if in fullscreen, else to body
+          const fsElem = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement;
+          if (fsElem && !fsElem.contains(seekOverlay)) {
+            fsElem.appendChild(seekOverlay);
+          } else if (!fsElem && seekOverlay.parentElement !== document.body) {
+            document.body.appendChild(seekOverlay);
+          }
+        }
+        // Listen for fullscreen changes
+        ['fullscreenchange', 'webkitfullscreenchange', 'mozfullscreenchange', 'MSFullscreenChange'].forEach(eventType => {
+          document.addEventListener(eventType, updateSeekOverlayParent);
+        });
+        // Initial placement
+        updateSeekOverlayParent();
         // --- Swipe to seek ---
         playerContainer.addEventListener('touchstart', function(e) {
+          updateSeekOverlayParent();
           if (e.touches.length === 1) {
             touchStartX = e.touches[0].clientX;
             touchStartY = e.touches[0].clientY;
