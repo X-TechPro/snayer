@@ -812,12 +812,14 @@
         subtitleMenuDiv.style.position = 'absolute';
         subtitleMenuDiv.style.zIndex = '100';
         // Render menu content
-        subtitleMenuDiv.innerHTML = '<p class="font-semibold mb-1 px-2">Subtitles</p>';
+        subtitleMenuDiv.innerHTML = '<p class="font-semibold mb-1 px-2 text-white">Subtitles</p><hr style="border:0;border-top:1px solid #fff;margin:0 0 4px 0;">';
         var off = document.createElement('a');
-        off.className = 'block px-2 py-1 hover:bg-white/10 rounded';
+        off.className = 'block px-2 py-1 hover:bg-white/10 rounded flex items-center justify-between';
         off.href = '#';
         off.textContent = 'Off';
-        off.innerHTML += !currentSubtitle ? ' <i data-lucide="check" class="lucide w-4 h-4 inline ml-1 align-middle"></i>' : '';
+        if (!currentSubtitle) {
+          off.innerHTML = '<span>Off</span><i data-lucide="check" class="lucide w-4 h-4 ml-1 align-middle"></i>';
+        }
         off.onclick = function(e) { e.preventDefault(); selectSubtitle(null); closeSubtitleMenu(); renderSubtitleMenu(); };
         subtitleMenuDiv.appendChild(off);
         // Only take the first subtitle for each language
@@ -827,12 +829,12 @@
           if (seenLangs[lang]) return;
           seenLangs[lang] = true;
           var a = document.createElement('a');
-          a.className = 'block px-2 py-1 hover:bg-white/10 rounded';
+          a.className = 'block px-2 py-1 hover:bg-white/10 rounded flex items-center justify-between';
           a.href = '#';
           a.textContent = sub.label || sub.display || sub.language || sub.format || ('Subtitle ' + (i+1));
           // Show tick if this is the current subtitle
           if (currentSubtitle && (currentSubtitle === sub || (currentSubtitle.file === sub.file && currentSubtitle.url === sub.url))) {
-            a.innerHTML += ' <i data-lucide="check" class="lucide w-4 h-4 inline ml-1 align-middle"></i>';
+            a.innerHTML = '<span>' + (sub.label || sub.display || sub.language || sub.format || ('Subtitle ' + (i+1))) + '</span><i data-lucide="check" class="lucide w-4 h-4 ml-1 align-middle"></i>';
           }
           a.onclick = function(e) { e.preventDefault(); selectSubtitle(sub); closeSubtitleMenu(); renderSubtitleMenu(); };
           subtitleMenuDiv.appendChild(a);
