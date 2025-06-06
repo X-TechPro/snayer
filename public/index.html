@@ -750,6 +750,24 @@
       subtitleDisplay.style.padding = '0.2em 1em';
       subtitleDisplay.style.minWidth = '0';
       subtitleDisplay.style.minHeight = '0';
+      subtitleDisplay.style.maxWidth = '96vw';
+      subtitleDisplay.style.wordBreak = 'break-word';
+      // Responsive font size for mobile
+      function updateSubtitleFontSize() {
+        const vw = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
+        if (vw <= 400) {
+          subtitleDisplay.style.fontSize = '0.85em';
+          subtitleDisplay.style.padding = '0.1em 0.3em';
+        } else if (vw <= 600) {
+          subtitleDisplay.style.fontSize = '1em';
+          subtitleDisplay.style.padding = '0.15em 0.5em';
+        } else {
+          subtitleDisplay.style.fontSize = '1.5em';
+          subtitleDisplay.style.padding = '0.2em 1em';
+        }
+      }
+      window.addEventListener('resize', updateSubtitleFontSize);
+      updateSubtitleFontSize();
       document.getElementById('player-container').appendChild(subtitleDisplay);
 
       // Helper: Parse SRT to cues (no regex literals)
@@ -945,6 +963,25 @@
         user-select: none;
         min-width: 120px;
         text-align: center;
+      }
+      /* Subtitle overlay responsive styles */
+      #subtitle-display {
+        font-size: 1.5em;
+        padding: 0.2em 1em;
+      }
+      @media (max-width: 600px) {
+        #subtitle-display {
+          font-size: 1em !important;
+          padding: 0.15em 0.5em !important;
+          max-width: 96vw;
+          line-height: 1.2;
+        }
+      }
+      @media (max-width: 400px) {
+        #subtitle-display {
+          font-size: 0.85em !important;
+          padding: 0.1em 0.3em !important;
+        }
       }
     </style>
     <div id="seek-overlay"></div>
