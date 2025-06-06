@@ -817,7 +817,8 @@
         off.className = 'block px-2 py-1 hover:bg-white/10 rounded';
         off.href = '#';
         off.textContent = 'Off';
-        off.onclick = function(e) { e.preventDefault(); selectSubtitle(null); closeSubtitleMenu(); };
+        off.innerHTML += !currentSubtitle ? ' <i data-lucide="check" class="lucide w-4 h-4 inline ml-1 align-middle"></i>' : '';
+        off.onclick = function(e) { e.preventDefault(); selectSubtitle(null); closeSubtitleMenu(); renderSubtitleMenu(); };
         subtitleMenuDiv.appendChild(off);
         // Only take the first subtitle for each language
         const seenLangs = {};
@@ -829,7 +830,11 @@
           a.className = 'block px-2 py-1 hover:bg-white/10 rounded';
           a.href = '#';
           a.textContent = sub.label || sub.display || sub.language || sub.format || ('Subtitle ' + (i+1));
-          a.onclick = function(e) { e.preventDefault(); selectSubtitle(sub); closeSubtitleMenu(); };
+          // Show tick if this is the current subtitle
+          if (currentSubtitle && (currentSubtitle === sub || (currentSubtitle.file === sub.file && currentSubtitle.url === sub.url))) {
+            a.innerHTML += ' <i data-lucide="check" class="lucide w-4 h-4 inline ml-1 align-middle"></i>';
+          }
+          a.onclick = function(e) { e.preventDefault(); selectSubtitle(sub); closeSubtitleMenu(); renderSubtitleMenu(); };
           subtitleMenuDiv.appendChild(a);
         });
       }
@@ -874,11 +879,12 @@
         currentSubtitle = sub;
         subtitleCues = [];
         subtitleDisplay.innerHTML = '';
-        if (!sub) return;
+        if (!sub) { renderSubtitleMenu(); return; }
         var url = sub.file || sub.url;
-        if (!url) return;
+        if (!url) { renderSubtitleMenu(); return; }
         fetch(url).then(function(r) { return r.text(); }).then(function(srt) {
           subtitleCues = parseSRT(srt);
+          renderSubtitleMenu();
         });
       }
       // Show subtitle for current time
