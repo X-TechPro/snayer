@@ -765,7 +765,7 @@
               var end = toSeconds(timeMatch[1].trim());
               // Fix weird emoji/encoding: decode as UTF-8 and normalize
               var text = lines.slice(2).join('<br>');
-              text = decodeURIComponent(escape(text)).normalize('NFC');
+              try { text = decodeURIComponent(escape(text)).normalize('NFC'); } catch(e) {}
               cues.push({ start: start, end: end, text: text });
             }
           }
@@ -936,6 +936,8 @@
         }
         subtitleDisplay.innerHTML = cue ? cue.text : '';
       });
+      // Render menu on DOMContentLoaded
+      document.addEventListener('DOMContentLoaded', renderSubtitleMenu);
     </script>
     <style>
       /* Seek overlay for swipe/double-tap feedback */
