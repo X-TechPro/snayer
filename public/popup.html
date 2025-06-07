@@ -151,8 +151,8 @@
           title = urlParams.get('title') || '';
         } catch (e) {}
         if (foundUrl) {
-          // Build /api/stream link
-          const streamLink = `/api/stream?url=${encodeURIComponent(foundUrl)}${title ? `&title=${encodeURIComponent(title)}` : ''}`;
+          // Build /api/stream link, now also pass tmdb if present
+          const streamLink = `/api/stream?url=${encodeURIComponent(foundUrl)}${title ? `&title=${encodeURIComponent(title)}` : ''}${tmdb ? `&tmdb=${encodeURIComponent(tmdb)}` : ''}`;
           // Automatically redirect to the stream page
           window.location.href = streamLink;
           // Optionally, still show a message while redirecting

@@ -2,12 +2,26 @@
 
 import fs from 'fs';
 import path from 'path';
+import fetch from 'node-fetch';
 
 export default async function handler(req, res) {
-    const { url, title } = req.query;
+    const { url, title, tmdb } = req.query;
 
     const htmlPath = path.join(process.cwd(), 'public', 'index.html');
     let html = fs.readFileSync(htmlPath, 'utf8');
+
+    // Fetch subtitles if tmdb param is present
+    let subtitles = [];
+    if (tmdb) {
+        try {
+            const subRes = await fetch(`https://madplay.site/api/subtitle?id=${tmdb}`);
+            if (subRes.ok) {
+                subtitles = await subRes.json();
+            }
+        } catch (e) {
+            // ignore subtitle errors
+        }
+    }
 
     if (url) {
         if (!url.startsWith('http')) {
@@ -17,6 +31,10 @@ export default async function handler(req, res) {
         html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.source = ${JSON.stringify(url)};</script>`);
         if (title) {
             html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.__PLAYER_TITLE__ = ${JSON.stringify(title)};</script>`);
+        }
+        // Inject subtitles as a JS variable
+        if (tmdb) {
+            html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.__SUBTITLES__ = ${JSON.stringify(subtitles)};</script>`);
         }
     }
 

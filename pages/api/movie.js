@@ -121,19 +121,6 @@ export default async function handler(req, res) {
         return;
     }
 
-    // Fetch subtitles from madplay.site
-    let subtitles = [];
-    if (tmdb) {
-        try {
-            const subRes = await fetch(`https://madplay.site/api/subtitle?id=${tmdb}`);
-            if (subRes.ok) {
-                subtitles = await subRes.json();
-            }
-        } catch (e) {
-            // ignore subtitle errors
-        }
-    }
-
     // Serve the HTML page
     const serveHtmlPage = (streamUrl = null, pageTitle = null) => {
         const htmlPath = path.join(process.cwd(), 'public', 'index.html');
@@ -153,8 +140,6 @@ export default async function handler(req, res) {
         if (streamUrl) {
             html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.source = ${JSON.stringify(streamUrl)};window.dispatchEvent(new Event('source-ready'));</script>`);
         }
-        // Inject subtitles as a JS variable
-        html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.__SUBTITLES__ = ${JSON.stringify(subtitles)};</script>`);
         res.setHeader('content-type', 'text/html');
         res.send(html);
     };
