@@ -72,8 +72,18 @@
         tmdb = urlParams.get('tmdb');
         season = urlParams.get('s') ? parseInt(urlParams.get('s'), 10) : 1;
         episode = urlParams.get('e') ? parseInt(urlParams.get('e'), 10) : 1;
-        if (urlParams.get('type') === 'tv') apiType = 'tv';
+        if (urlParams.get('type') === 'tv') {
+          apiType = 'tv';
+        } else if ((urlParams.has('s') || urlParams.has('e')) && !urlParams.get('type')) {
+          // Fallback: if season or episode is present, assume TV
+          apiType = 'tv';
+        }
+        // Optionally, check pathname for future-proofing
+        if (window.location.pathname.includes('/tv')) {
+          apiType = 'tv';
+        }
       } catch (e) {}
+      console.log('Using API type:', apiType);
       
       function renderProviders() {
         providersContainer.innerHTML = '';
