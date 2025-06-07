@@ -5,61 +5,121 @@ import puppeteer from 'puppeteer-core';
 import fs from 'fs';
 import path from 'path';
 import fetch from 'node-fetch';
+import { Readable } from 'stream';
+
+// Store progress for each request (in-memory, per tmdb id)
+const progressMap = new Map();
 
 function getProviders(tmdb_id) {
     return [
-        `https://player.vidsrc.co/embed/movie/${tmdb_id}`,
-        `https://player.autoembed.cc/embed/movie/${tmdb_id}`,
-        `https://uembed.site/?id=${tmdb_id}`,
-        `https://iframe.pstream.org/embed/tmdb-movie-${tmdb_id}`,
+        { name: 'Vidsrc', url: `https://player.vidsrc.co/embed/movie/${tmdb_id}` },
+        { name: 'AutoEmbed', url: `https://player.autoembed.cc/embed/movie/${tmdb_id}` },
+        { name: 'UEmbed', url: `https://uembed.site/?id=${tmdb_id}` },
+        { name: 'P-Stream', url: `https://iframe.pstream.org/embed/tmdb-movie-${tmdb_id}` },
     ];
 }
 
-async function sniffStreamUrl(tmdb_id, browserlessToken) {
+async function sniffStreamUrl(tmdb_id, browserlessToken, onStatus) {
     if (!browserlessToken) {
         throw new Error('Missing BROWSERLESS_TOKEN environment variable or api param.');
     }
     const browserWSEndpoint = `wss://production-lon.browserless.io?token=${browserlessToken}`;
     const providers = getProviders(tmdb_id);
-    for (const EMBED_URL of providers) {
-        console.log('Connecting to:', browserWSEndpoint);
-        const browser = await puppeteer.connect({ browserWSEndpoint });
-        console.log('Connected!');
-        const page = await browser.newPage();
-        let mp4Info = [];
-        let m3u8Info = [];
-        await page.setRequestInterception(true);
-        page.on('request', req => req.continue());
-        page.on('response', async response => {
-            const url = response.url();
-            const headers = response.headers();
-            const len = headers['content-length'] ? parseInt(headers['content-length']) : 0;
-            if (url.includes('.mp4')) {
-                mp4Info.push({ url, size: len });
-            }
-            if (url.includes('.m3u8')) {
-                m3u8Info.push({ url, time: Date.now() });
-            }
-        });
-        await page.goto(EMBED_URL, { waitUntil: 'networkidle2', timeout: 60000 });
-        await new Promise(r => setTimeout(r, 3000));
+    for (let i = 0; i < providers.length; i++) {
+        const provider = providers[i];
+        if (onStatus) onStatus(i, 'loading');
         let finalUrl = null;
-        if (mp4Info.length) {
-            finalUrl = mp4Info.sort((a, b) => (b.size - a.size) || (b.url.length - a.url.length))[0]?.url;
-        } else if (m3u8Info.length) {
-            // Pick the newest m3u8 (last one seen)
-            finalUrl = m3u8Info.sort((a, b) => b.time - a.time)[0]?.url;
+        try {
+            const browser = await puppeteer.connect({ browserWSEndpoint });
+            const page = await browser.newPage();
+            let mp4Info = [];
+            let m3u8Info = [];
+            await page.setRequestInterception(true);
+            page.on('request', req => req.continue());
+            page.on('response', async response => {
+                const url = response.url();
+                const headers = response.headers();
+                const len = headers['content-length'] ? parseInt(headers['content-length']) : 0;
+                if (url.includes('.mp4')) {
+                    mp4Info.push({ url, size: len });
+                }
+                if (url.includes('.m3u8')) {
+                    m3u8Info.push({ url, time: Date.now() });
+                }
+            });
+            await page.goto(provider.url, { waitUntil: 'networkidle2', timeout: 60000 });
+            await new Promise(r => setTimeout(r, 3000));
+            if (mp4Info.length) {
+                finalUrl = mp4Info.sort((a, b) => (b.size - a.size) || (b.url.length - a.url.length))[0]?.url;
+            } else if (m3u8Info.length) {
+                finalUrl = m3u8Info.sort((a, b) => b.time - a.time)[0]?.url;
+            }
+            await browser.close();
+        } catch (e) {
+            // ignore error, mark as error
         }
-        await browser.close();
         if (finalUrl) {
+            if (onStatus) onStatus(i, 'completed', finalUrl);
             return finalUrl;
+        } else {
+            if (onStatus) onStatus(i, 'error');
         }
     }
     return null;
 }
 
 export default async function handler(req, res) {
-    const { tmdb, api, title } = req.query;
+    const { tmdb, api, title, progress } = req.query;
+
+    // SSE endpoint for progress
+    if (progress && tmdb) {
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+        res.flushHeaders();
+        // Send initial state
+        let state = progressMap.get(tmdb) || { statuses: ["pending", "pending", "pending", "pending"], found: null };
+        res.write(`data: ${JSON.stringify(state)}\n\n`);
+        // Poll for updates
+        const interval = setInterval(() => {
+            let state = progressMap.get(tmdb);
+            if (state) {
+                res.write(`data: ${JSON.stringify(state)}\n\n`);
+                if (state.found !== null || state.statuses.every(s => s === 'completed' || s === 'error')) {
+                    clearInterval(interval);
+                    res.end();
+                }
+            }
+        }, 1000);
+        req.on('close', () => clearInterval(interval));
+        return;
+    }
+
+    // Serve popup.html immediately if tmdb param is present
+    if (tmdb) {
+        const htmlPath = path.join(process.cwd(), 'public', 'popup.html');
+        let html = fs.readFileSync(htmlPath, 'utf8');
+        res.setHeader('content-type', 'text/html');
+        res.send(html);
+        // Start sniffing in background
+        (async () => {
+            const browserlessToken = api || process.env.BROWSERLESS_TOKEN;
+            const providers = getProviders(tmdb);
+            let statuses = ["pending", "pending", "pending", "pending"];
+            let found = null;
+            progressMap.set(tmdb, { statuses, found });
+            await sniffStreamUrl(tmdb, browserlessToken, (idx, status, url) => {
+                statuses[idx] = status;
+                if (status === 'completed' && url) {
+                    found = url;
+                }
+                progressMap.set(tmdb, { statuses: [...statuses], found });
+            });
+            // After done, keep result for a short time
+            setTimeout(() => progressMap.delete(tmdb), 60000);
+        })();
+        return;
+    }
 
     // Fetch subtitles from madplay.site
     let subtitles = [];
