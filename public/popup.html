@@ -144,8 +144,19 @@
       function showResult(foundUrl) {
         const resultDiv = document.createElement('div');
         resultDiv.className = 'mt-6 p-4 rounded-xl bg-gradient-to-r from-[#0099ff]/10 to-cyan-400/5 text-center';
+        // Get title from query param if present
+        let title = '';
+        try {
+          const urlParams = new URLSearchParams(window.location.search);
+          title = urlParams.get('title') || '';
+        } catch (e) {}
         if (foundUrl) {
-          resultDiv.innerHTML = `<div class='text-green-400 font-bold mb-2'>Stream Found!</div><a href='${foundUrl}' target='_blank' class='underline text-[#0099ff] break-all'>${foundUrl}</a>`;
+          // Build /api/stream link
+          const streamLink = `/api/stream?url=${encodeURIComponent(foundUrl)}${title ? `&title=${encodeURIComponent(title)}` : ''}`;
+          // Automatically redirect to the stream page
+          window.location.href = streamLink;
+          // Optionally, still show a message while redirecting
+          resultDiv.innerHTML = `<div class='text-green-400 font-bold mb-2'>Stream Found! Redirecting...</div><div class='mt-2 text-xs text-[#0099ff]/80 break-all'>${foundUrl}</div>`;
         } else {
           resultDiv.innerHTML = `<div class='text-red-400 font-bold'>No stream found from any provider.</div>`;
         }
