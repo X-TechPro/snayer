@@ -63,10 +63,14 @@
       const progressBadge = document.getElementById('progress-badge');
       let foundStream = null;
       let tmdb = null;
-      // Try to get tmdb param from URL
+      let season = 1;
+      let episode = 1;
+      // Try to get tmdb, s, e param from URL
       try {
         const urlParams = new URLSearchParams(window.location.search);
         tmdb = urlParams.get('tmdb');
+        season = urlParams.get('s') ? parseInt(urlParams.get('s'), 10) : 1;
+        episode = urlParams.get('e') ? parseInt(urlParams.get('e'), 10) : 1;
       } catch (e) {}
       
       function renderProviders() {
@@ -165,7 +169,14 @@
       
       function listenForProgress() {
         if (!tmdb) return;
-        const evtSource = new EventSource(`/api/movie?tmdb=${encodeURIComponent(tmdb)}&progress=1`);
+        // Detect if this is a TV request (has s/e params)
+        let apiPath = '/api/movie';
+        let params = `tmdb=${encodeURIComponent(tmdb)}&progress=1`;
+        if (window.location.pathname.includes('/tv') || window.location.search.includes('s=') || window.location.search.includes('e=')) {
+          apiPath = '/api/tv';
+          params += `&s=${encodeURIComponent(season)}&e=${encodeURIComponent(episode)}`;
+        }
+        const evtSource = new EventSource(`${apiPath}?${params}`);
         evtSource.onmessage = function(event) {
           try {
             const data = JSON.parse(event.data);
