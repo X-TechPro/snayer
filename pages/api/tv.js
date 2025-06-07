@@ -5,9 +5,14 @@ import puppeteer from 'puppeteer-core';
 import fs from 'fs';
 import path from 'path';
 import fetch from 'node-fetch';
+import { Readable } from 'stream';
 
-// Store progress for each request (in-memory, per tmdb/season/episode key)
+// Store progress for each request (in-memory, per tmdb id/season/episode)
 const progressMap = new Map();
+
+function getProgressKey(tmdb, season, episode) {
+    return `${tmdb}:${season}:${episode}`;
+}
 
 function getProviders(tmdb_id, season, episode) {
     return [
@@ -69,8 +74,10 @@ async function sniffStreamUrl(tmdb_id, season, episode, browserlessToken, onStat
 
 export default async function handler(req, res) {
     const { tmdb, api, title, s, e, progress } = req.query;
-    // Compose a unique key for this episode
-    const key = `${tmdb || ''}_${s || 1}_${e || 1}`;
+    // Parse season and episode, default to 1 if not provided
+    const season = s ? parseInt(s, 10) : 1;
+    const episode = e ? parseInt(e, 10) : 1;
+    const progressKey = getProgressKey(tmdb, season, episode);
 
     // SSE endpoint for progress
     if (progress && tmdb) {
@@ -79,11 +86,11 @@ export default async function handler(req, res) {
         res.setHeader('Connection', 'keep-alive');
         res.flushHeaders();
         // Send initial state
-        let state = progressMap.get(key) || { statuses: ["pending", "pending", "pending", "pending"], found: null };
+        let state = progressMap.get(progressKey) || { statuses: ["pending", "pending", "pending", "pending"], found: null };
         res.write(`data: ${JSON.stringify(state)}\n\n`);
         // Poll for updates
         const interval = setInterval(() => {
-            let state = progressMap.get(key);
+            let state = progressMap.get(progressKey);
             if (state) {
                 res.write(`data: ${JSON.stringify(state)}\n\n`);
                 if (state.found !== null || state.statuses.every(s => s === 'completed' || s === 'error')) {
@@ -97,7 +104,7 @@ export default async function handler(req, res) {
     }
 
     // Serve popup.html immediately if tmdb param is present
-    if (tmdb) {
+    if (tmdb && !progress) {
         const htmlPath = path.join(process.cwd(), 'public', 'popup.html');
         let html = fs.readFileSync(htmlPath, 'utf8');
         res.setHeader('content-type', 'text/html');
@@ -105,25 +112,37 @@ export default async function handler(req, res) {
         // Start sniffing in background
         (async () => {
             const browserlessToken = api || process.env.BROWSERLESS_TOKEN;
-            const season = s ? parseInt(s, 10) : 1;
-            const episode = e ? parseInt(e, 10) : 1;
+            const providers = getProviders(tmdb, season, episode);
             let statuses = ["pending", "pending", "pending", "pending"];
             let found = null;
-            progressMap.set(key, { statuses, found });
+            progressMap.set(progressKey, { statuses, found });
             await sniffStreamUrl(tmdb, season, episode, browserlessToken, (idx, status, url) => {
                 statuses[idx] = status;
                 if (status === 'completed' && url) {
                     found = url;
                 }
-                progressMap.set(key, { statuses: [...statuses], found });
+                progressMap.set(progressKey, { statuses: [...statuses], found });
             });
             // After done, keep result for a short time
-            setTimeout(() => progressMap.delete(key), 60000);
+            setTimeout(() => progressMap.delete(progressKey), 60000);
         })();
         return;
     }
 
-    // Serve the HTML page (no longer fetch subtitles here)
+    // Fetch subtitles from madplay.site
+    let subtitles = [];
+    if (tmdb) {
+        try {
+            const subRes = await fetch(`https://madplay.site/api/subtitle?id=${tmdb}`);
+            if (subRes.ok) {
+                subtitles = await subRes.json();
+            }
+        } catch (e) {
+            // ignore subtitle errors
+        }
+    }
+
+    // Serve the HTML page
     const serveHtmlPage = (streamUrl = null, pageTitle = null) => {
         const htmlPath = path.join(process.cwd(), 'public', 'index.html');
         let html = fs.readFileSync(htmlPath, 'utf8');
@@ -136,11 +155,14 @@ export default async function handler(req, res) {
         }
         // Inject the title as a JS variable for the frontend
         if (pageTitle) {
+            // Insert after <script> tag for Lucide (early in <head>)
             html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.__PLAYER_TITLE__ = ${JSON.stringify(pageTitle)};</script>`);
         }
         if (streamUrl) {
             html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.source = ${JSON.stringify(streamUrl)};window.dispatchEvent(new Event('source-ready'));</script>`);
         }
+        // Inject subtitles as a JS variable
+        html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.__SUBTITLES__ = ${JSON.stringify(subtitles)};</script>`);
         res.setHeader('content-type', 'text/html');
         res.send(html);
     };
@@ -151,8 +173,6 @@ export default async function handler(req, res) {
 
     if (!tmdb) return res.status(400).send('Missing tmdb param');
     const browserlessToken = api || process.env.BROWSERLESS_TOKEN;
-    const season = s ? parseInt(s, 10) : 1;
-    const episode = e ? parseInt(e, 10) : 1;
     let streamUrl;
     try {
         streamUrl = await sniffStreamUrl(tmdb, season, episode, browserlessToken);
