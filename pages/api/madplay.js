@@ -29,31 +29,9 @@ function runMiddleware(req, res, fn) {
   });
 }
 
-// Next.js custom route handler for /api/madplay/proxy
-export async function handlerProxy(req, res) {
-  await runMiddleware(req, res, corsMiddleware);
-  const { url } = req.query;
-  if (!url || !url.startsWith('http')) return res.status(400).send('Invalid url');
-  try {
-    const streamRes = await axios.get(url, {
-      headers: { origin: 'https://madplay.site' },
-      responseType: 'stream',
-    });
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Headers', '*');
-    res.setHeader('content-type', streamRes.headers['content-type'] || 'application/octet-stream');
-    streamRes.data.pipe(res);
-  } catch (e) {
-    res.status(502).send('Proxy error: ' + e.message);
-  }
-}
-
 // Next.js API route handler
 export default async function mainHandler(req, res) {
   await runMiddleware(req, res, corsMiddleware);
-  if (req.url.startsWith('/api/madplay/proxy')) {
-    return handlerProxy(req, res);
-  }
 
   const { tmdb } = req.query;
   if (!tmdb) return res.status(400).json({ error: 'Missing tmdb param' });
