@@ -1,6 +1,7 @@
 {
   "dependencies": {
     "axios": "^1.9.0",
+    "cors": "^2.8.5",
     "fs": "0.0.1-security",
     "next": "^15.3.2",
     "node-fetch": "^3.3.2",

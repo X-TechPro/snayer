@@ -1,5 +1,6 @@
 // Next.js API route for /api/madplay
-import fetch from 'node-fetch';
+import axios from 'axios';
+import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
 
@@ -10,16 +11,38 @@ export const config = {
   },
 };
 
+// CORS middleware wrapper for Next.js API
+const corsMiddleware = cors({
+  origin: '*',
+  methods: ['GET', 'HEAD'],
+  allowedHeaders: ['*'],
+});
+
+function runMiddleware(req, res, fn) {
+  return new Promise((resolve, reject) => {
+    fn(req, res, (result) => {
+      if (result instanceof Error) {
+        return reject(result);
+      }
+      return resolve(result);
+    });
+  });
+}
+
 // Next.js custom route handler for /api/madplay/proxy
 export async function handlerProxy(req, res) {
+  await runMiddleware(req, res, corsMiddleware);
   const { url } = req.query;
   if (!url || !url.startsWith('http')) return res.status(400).send('Invalid url');
   try {
-    const streamRes = await fetch(url, { headers: { 'origin': 'https://madplay.site' } });
+    const streamRes = await axios.get(url, {
+      headers: { origin: 'https://madplay.site' },
+      responseType: 'stream',
+    });
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Headers', '*');
-    res.setHeader('content-type', streamRes.headers.get('content-type') || 'application/octet-stream');
-    streamRes.body.pipe(res);
+    res.setHeader('content-type', streamRes.headers['content-type'] || 'application/octet-stream');
+    streamRes.data.pipe(res);
   } catch (e) {
     res.status(502).send('Proxy error: ' + e.message);
   }
@@ -27,6 +50,7 @@ export async function handlerProxy(req, res) {
 
 // Next.js API route handler
 export default async function mainHandler(req, res) {
+  await runMiddleware(req, res, corsMiddleware);
   if (req.url.startsWith('/api/madplay/proxy')) {
     return handlerProxy(req, res);
   }
@@ -37,9 +61,8 @@ export default async function mainHandler(req, res) {
   // Step 1: Fetch madplay playsrc
   let playsrc;
   try {
-      const srcRes = await fetch(`https://madplay.site/api/playsrc?id=${encodeURIComponent(tmdb)}`);
-      if (!srcRes.ok) throw new Error('madplay.site/api/playsrc failed');
-      const srcJson = await srcRes.json();
+      const srcRes = await axios.get(`https://madplay.site/api/playsrc?id=${encodeURIComponent(tmdb)}`);
+      const srcJson = srcRes.data;
       if (!Array.isArray(srcJson) || !srcJson[0]?.file) throw new Error('No file in madplay response');
       playsrc = srcJson[0].file;
   } catch (e) {
@@ -49,9 +72,8 @@ export default async function mainHandler(req, res) {
   // Step 2: Fetch master.m3u8 and pick best resolution
   let bestStreamUrl = null;
   try {
-      const m3u8Res = await fetch(playsrc);
-      if (!m3u8Res.ok) throw new Error('Failed to fetch master.m3u8');
-      const m3u8 = await m3u8Res.text();
+      const m3u8Res = await axios.get(playsrc);
+      const m3u8 = m3u8Res.data;
       // Parse m3u8 for all #EXT-X-STREAM-INF and their URLs
       const lines = m3u8.split('\n');
       let bestRes = 0;
@@ -79,7 +101,7 @@ export default async function mainHandler(req, res) {
   const htmlPath = path.join(process.cwd(), 'public', 'index.html');
   let html = fs.readFileSync(htmlPath, 'utf8');
   // Inject the video source as window.source
-  html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.source = '/api/madplay/proxy?url=' + encodeURIComponent('${bestStreamUrl}');</script>`);
+  html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.source = '/api/madplay/proxy?url=' + encodeURIComponent('${bestStreamUrl}');<\/script>`);
   res.setHeader('content-type', 'text/html');
   res.send(html);
 }
