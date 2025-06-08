@@ -33,13 +33,17 @@ function runMiddleware(req, res, fn) {
 export default async function mainHandler(req, res) {
   await runMiddleware(req, res, corsMiddleware);
 
-  const { tmdb } = req.query;
+  const { tmdb, title, s, e } = req.query;
   if (!tmdb) return res.status(400).json({ error: 'Missing tmdb param' });
 
-  // Step 1: Fetch madplay playsrc
+  // Step 1: Fetch madplay playsrc (support season/episode)
   let playsrc;
   try {
-      const srcRes = await axios.get(`https://madplay.site/api/playsrc?id=${encodeURIComponent(tmdb)}`);
+      let playsrcUrl = `https://madplay.site/api/playsrc?id=${encodeURIComponent(tmdb)}`;
+      if (s && e) {
+        playsrcUrl += `&season=${encodeURIComponent(s)}&episode=${encodeURIComponent(e)}`;
+      }
+      const srcRes = await axios.get(playsrcUrl);
       const srcJson = srcRes.data;
       if (!Array.isArray(srcJson) || !srcJson[0]?.file) throw new Error('No file in madplay response');
       playsrc = srcJson[0].file;
@@ -75,11 +79,32 @@ export default async function mainHandler(req, res) {
       return res.status(502).json({ error: 'Failed to parse m3u8', detail: e.message });
   }
 
-  // Step 3: Serve index.html with injected stream URL (CORS proxy)
+  // Step 3: Fetch subtitles if tmdb param is present
+  let subtitles = [];
+  if (tmdb) {
+    try {
+      const subRes = await axios.get(`https://madplay.site/api/subtitle?id=${encodeURIComponent(tmdb)}`);
+      if (subRes.status === 200) {
+        subtitles = subRes.data;
+      }
+    } catch (e) {
+      // ignore subtitle errors
+    }
+  }
+
+  // Step 4: Serve index.html with injected stream URL, title, and subtitles
   const htmlPath = path.join(process.cwd(), 'public', 'index.html');
   let html = fs.readFileSync(htmlPath, 'utf8');
   // Inject the video source as window.source
   html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.source = '/api/madplay/proxy?url=' + encodeURIComponent('${bestStreamUrl}');<\/script>`);
+  // Inject the title as window.__PLAYER_TITLE__
+  if (title) {
+    html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.__PLAYER_TITLE__ = ${JSON.stringify(title)};<\/script>`);
+  }
+  // Inject subtitles as window.__SUBTITLES__
+  if (subtitles && subtitles.length) {
+    html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.__SUBTITLES__ = ${JSON.stringify(subtitles)};<\/script>`);
+  }
   res.setHeader('content-type', 'text/html');
   res.send(html);
 }
