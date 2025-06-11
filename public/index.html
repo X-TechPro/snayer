@@ -100,6 +100,25 @@
         transform: translate(-50%, -50%);
         z-index: 3;
         transition: left 0.1s linear;
+        pointer-events: none;
+        user-select: none;
+      }
+      /* Time indicator tooltip for seekbar */
+      #seekbar-time-indicator {
+        position: absolute;
+        top: -2.2em;
+        left: 0;
+        transform: translateX(-50%);
+        background: rgba(0,0,0,0.85);
+        color: #fff;
+        font-size: 0.95em;
+        padding: 0.18em 0.7em;
+        border-radius: 0.5em;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.15s, left 0.1s;
+        z-index: 10;
+        white-space: nowrap;
       }
       .seekbar-wrapper:hover .seekbar-hover {
         display: block;
@@ -533,6 +552,13 @@
       const fill = document.getElementById('fill');
       const thumb = document.getElementById('thumb');
       const hoverFill = document.getElementById('hoverFill');
+      // Time indicator tooltip
+      let seekbarTimeIndicator = document.getElementById('seekbar-time-indicator');
+      if (!seekbarTimeIndicator) {
+        seekbarTimeIndicator = document.createElement('div');
+        seekbarTimeIndicator.id = 'seekbar-time-indicator';
+        seekbarWrapper.appendChild(seekbarTimeIndicator);
+      }
 
       function updateSeekbarUI() {
         if (!isNaN(video.duration) && video.duration > 0) {
@@ -552,7 +578,7 @@
       video.addEventListener('loadedmetadata', updateSeekbarUI);
       window.addEventListener('resize', updateSeekbarUI);
 
-      // Seek on click/drag
+      // Seek on click/drag (only horizontal, thumb is not interactive)
       let isSeeking = false;
       function seekToMouse(e) {
         const rect = seekbarWrapper.getBoundingClientRect();
@@ -563,6 +589,7 @@
         }
       }
       seekbarWrapper.addEventListener('mousedown', (e) => {
+        if (e.target === thumb) return; // Prevent direct thumb drag
         isSeeking = true;
         seekToMouse(e);
       });
@@ -584,7 +611,7 @@
         isSeeking = false;
       });
 
-      // Hover fill effect
+      // Hover fill effect & time indicator
       seekbarWrapper.addEventListener('mousemove', (e) => {
         const rect = seekbarWrapper.getBoundingClientRect();
         const mouseX = e.clientX - rect.left;
@@ -599,9 +626,20 @@
           hoverFill.style.left = `${mouseX}px`;
           hoverFill.style.width = `${currentX - mouseX}px`;
         }
+        // Time indicator
+        if (!isNaN(video.duration) && video.duration > 0) {
+          const hoverRatio = Math.max(0, Math.min(1, mouseX / totalWidth));
+          const hoverTime = hoverRatio * video.duration;
+          seekbarTimeIndicator.textContent = formatTime(hoverTime);
+          seekbarTimeIndicator.style.left = `${mouseX}px`;
+          seekbarTimeIndicator.style.opacity = '1';
+        } else {
+          seekbarTimeIndicator.style.opacity = '0';
+        }
       });
       seekbarWrapper.addEventListener('mouseleave', () => {
         hoverFill.style.width = `0px`;
+        seekbarTimeIndicator.style.opacity = '0';
       });
       // --- End Custom Seekbar Logic ---
 
