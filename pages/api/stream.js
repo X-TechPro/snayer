@@ -18,10 +18,17 @@ export default async function handler(req, res) {
 
         if (proxy) {
             try {
-                const response = await fetch(proxy);
+                const proxyUrl = new URL(proxy);
+                const sParam = req.query.s;
+
+                if (sParam) {
+                    proxyUrl.searchParams.set('s', sParam);
+                }
+
+                const response = await fetch(proxyUrl.toString());
                 const m3u8Content = await response.text();
 
-                const baseUrl = proxy.substring(0, proxy.lastIndexOf('/') + 1);
+                const baseUrl = proxyUrl.origin + proxyUrl.pathname.substring(0, proxyUrl.pathname.lastIndexOf('/') + 1);
                 const rewrittenM3u8 = m3u8Content
                     .split('\n')
                     .map(line => {
