@@ -1,76 +1,83 @@
-// pages/api/stream.js
+// Next.js API route for /api/stream
 
 import fs from 'fs';
 import path from 'path';
 import fetch from 'node-fetch';
-import Cors from 'cors';
+import cors from 'cors';
 
-// Initialize CORS middleware
-const cors = Cors({
-  origin: '*',
-  methods: ['GET'],
-  allowedHeaders: ['Content-Type'],
+// Enable CORS
+const corsMiddleware = cors({
+    origin: '*',
+    methods: ['GET', 'POST'],
+    allowedHeaders: ['Content-Type']
 });
 
-// Utility to run middleware
-function runMiddleware(req, res, fn) {
-  return new Promise((resolve, reject) => {
-    fn(req, res, (result) => {
-      if (result instanceof Error) return reject(result);
-      return resolve(result);
-    });
-  });
-}
-
 export default async function handler(req, res) {
-  // Run CORS
-  await runMiddleware(req, res, cors);
+    corsMiddleware(req, res, async () => {
+        const { url, title, tmdb, proxy } = req.query;
 
-  const { proxy: proxyEncoded } = req.query;
+        if (proxy) {
+            try {
+                const proxyUrl = new URL(decodeURIComponent(proxy));
 
-  if (proxyEncoded) {
-    try {
-      // Decode the full URL including query string
-      const decoded = decodeURIComponent(proxyEncoded);
-      const upstreamUrl = new URL(decoded);
+                const response = await fetch(proxyUrl.toString());
+                const m3u8Content = await response.text();
 
-      // Fetch via Node with minimal headers (mimic curl/VLC)
-      const upstreamRes = await fetch(upstreamUrl.toString(), {
-        headers: {
-          'User-Agent': 'curl/7.64.1',
-          'Accept': '*/*',
-          'Range': 'bytes=0-',
-        },
-      });
+                const baseUrl = proxyUrl.origin + proxyUrl.pathname.substring(0, proxyUrl.pathname.lastIndexOf('/') + 1);
+                const rewrittenM3u8 = m3u8Content
+                    .split('\n')
+                    .map(line => {
+                        if (line.startsWith('http://') || line.startsWith('https://')) {
+                            return line;
+                        } else if (line.trim() && !line.startsWith('#')) {
+                            return baseUrl + line;
+                        }
+                        return line;
+                    })
+                    .join('\n');
 
-      if (!upstreamRes.ok) {
-        return res.status(upstreamRes.status).send(`Upstream error: ${upstreamRes.statusText}`);
-      }
+                res.setHeader('content-type', 'application/vnd.apple.mpegurl');
+                return res.send(rewrittenM3u8);
+            } catch (error) {
+                return res.status(500).send('Failed to process .m3u8 file');
+            }
+        }
 
-      // Rewrite relative segment URLs if needed
-      const text = await upstreamRes.text();
-      const base = upstreamUrl.origin + upstreamUrl.pathname.replace(/\/[^/]*$/, '/') ;
-      const m3u8 = text
-        .split('\n')
-        .map(line => {
-          if (/^https?:\/\//.test(line) || line.startsWith('#') || !line.trim()) {
-            return line;
-          }
-          return base + line;
-        })
-        .join('\n');
+        const htmlPath = path.join(process.cwd(), 'public', 'index.html');
+        let html = fs.readFileSync(htmlPath, 'utf8');
 
-      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-      return res.send(m3u8);
-    } catch (err) {
-      console.error(err);
-      return res.status(500).send('Failed to proxy M3U8');
-    }
-  }
+        // Fetch subtitles if tmdb param is present
+        let subtitles = [];
+        if (tmdb) {
+            try {
+                const subRes = await fetch(`https://madplay.site/api/subtitle?id=${tmdb}`);
+                if (subRes.ok) {
+                    subtitles = await subRes.json();
+                }
+            } catch (e) {
+                // ignore subtitle errors
+            }
+        }
 
-  // Fallback: serve HTML player
-  const htmlPath = path.join(process.cwd(), 'public', 'index.html');
-  let html = fs.readFileSync(htmlPath, 'utf8');
-  res.setHeader('Content-Type', 'text/html');
-  return res.send(html);
+        if (url) {
+            if (!url.startsWith('http')) {
+                return res.status(400).send('Invalid URL');
+            }
+            // Ensure we use the complete URL with all query parameters
+            const completeUrl = decodeURIComponent(url);
+            
+            // Inject the video source and title into the HTML for the player using window.source
+            html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.source = ${JSON.stringify(completeUrl)};</script>`);
+            if (title) {
+                html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.__PLAYER_TITLE__ = ${JSON.stringify(title)};</script>`);
+            }
+            // Inject subtitles as a JS variable
+            if (tmdb) {
+                html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.__SUBTITLES__ = ${JSON.stringify(subtitles)};</script>`);
+            }
+        }
+
+        res.setHeader('content-type', 'text/html');
+        res.send(html);
+    });
 }
