@@ -20,8 +20,17 @@ export default async function handler(req, res) {
             // Optionally, cache-control for playlist/segments
             // res.setHeader('Cache-Control', 'public, max-age=60');
 
+            // Browser-like headers
+            const headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
+                'Accept': '*/*',
+                'Accept-Language': 'en-US,en;q=0.9,fr;q=0.8',
+                'Referer': 'https://hexawave3.xyz/',
+                'Origin': 'https://hexawave3.xyz/'
+                // 'Accept-Encoding': 'identity;q=1, *;q=0', // node-fetch does not support gzip by default
+            };
             // m3u8 is the playlist URL
-            const playlistRes = await fetch(m3u8);
+            const playlistRes = await fetch(m3u8, { headers });
             if (!playlistRes.ok) return res.status(502).send('Failed to fetch playlist');
             let playlistText = await playlistRes.text();
 
@@ -31,7 +40,6 @@ export default async function handler(req, res) {
             const basePath = parsed.pathname ? parsed.pathname.substring(0, parsed.pathname.lastIndexOf('/') + 1) : '/';
             const fullBase = baseUrl + basePath;
 
-            // Rewrite segment URIs
             // --- Robust playlist rewriting ---
             const lines = playlistText.split(/\r?\n/);
             const rewritten = lines.map((line) => {
@@ -57,15 +65,26 @@ export default async function handler(req, res) {
     // Proxy for segment files
     if (segment) {
         try {
+            // Browser-like headers, forward Range if present
             const headers = {
-                'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
+                'Accept': '*/*',
+                'Accept-Language': 'en-US,en;q=0.9,fr;q=0.8',
                 'Referer': 'https://hexawave3.xyz/',
-                'Origin': ''
+                'Origin': 'https://hexawave3.xyz/'
             };
+            if (req.headers['range']) {
+                headers['Range'] = req.headers['range'];
+            }
             const segRes = await fetch(segment, { headers });
             if (!segRes.ok) return res.status(502).send('Failed to fetch segment');
             // Forward headers for video streaming
             res.setHeader('content-type', segRes.headers.get('content-type') || 'application/octet-stream');
+            // Forward range/partial content headers if present
+            if (segRes.headers.get('content-range')) {
+                res.setHeader('content-range', segRes.headers.get('content-range'));
+                res.statusCode = 206;
+            }
             // res.setHeader('Cache-Control', 'public, max-age=60'); // Optional
             // Robust stream piping with error handling
             pipeline(segRes.body, res, (err) => {
