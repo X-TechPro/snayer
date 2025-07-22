@@ -17,18 +17,19 @@ export default async function handler(req, res) {
         // Handle proxy requests
         if (proxy) {
             try {
-                const decodedUrl = decodeURIComponent(proxy);
-                if (!isValidUrl(decodedUrl)) {
-                    return res.status(400).send('Invalid proxy URL');
-                }
-
-                const proxyResponse = await fetch(decodedUrl);
+                // Preserve all query parameters from original URL
+                const fullUrl = new URL(decodeURIComponent(proxy));
+                
+                // Reconstruct URL with all original query parameters
+                const reconstructedUrl = fullUrl.origin + fullUrl.pathname + fullUrl.search;
+                
+                const proxyResponse = await fetch(reconstructedUrl);
                 if (!proxyResponse.ok) {
                     return res.status(proxyResponse.status).send('Upstream server error');
                 }
 
                 const m3u8Content = await proxyResponse.text();
-                const basePath = getBasePath(decodedUrl);
+                const basePath = getBasePath(reconstructedUrl);
                 const rewrittenContent = rewriteM3U8(m3u8Content, basePath);
 
                 res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
@@ -46,10 +47,8 @@ export default async function handler(req, res) {
             const injectionScripts = [];
 
             if (url) {
-                if (!isValidUrl(url)) {
-                    return res.status(400).send('Invalid video URL');
-                }
-                injectionScripts.push(`window.source = ${JSON.stringify(decodeURIComponent(url))};`);
+                const decodedUrl = decodeURIComponent(url);
+                injectionScripts.push(`window.source = ${JSON.stringify(decodedUrl)};`);
             }
 
             if (title) {
@@ -86,15 +85,6 @@ export default async function handler(req, res) {
 }
 
 // Helper functions
-function isValidUrl(string) {
-    try {
-        new URL(string);
-        return true;
-    } catch (_) {
-        return false;
-    }
-}
-
 function getBasePath(fullUrl) {
     const urlObj = new URL(fullUrl);
     return `${urlObj.origin}${urlObj.pathname.substring(0, urlObj.pathname.lastIndexOf('/') + 1)}`;
