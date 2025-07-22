@@ -18,12 +18,7 @@ export default async function handler(req, res) {
 
         if (proxy) {
             try {
-                const proxyUrl = new URL(proxy);
-                const sParam = req.query.s;
-
-                if (sParam) {
-                    proxyUrl.searchParams.set('s', sParam);
-                }
+                const proxyUrl = new URL(decodeURIComponent(proxy));
 
                 const response = await fetch(proxyUrl.toString());
                 const m3u8Content = await response.text();
