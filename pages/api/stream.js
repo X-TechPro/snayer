@@ -28,48 +28,39 @@ export default async function handler(req, res) {
             return res.status(400).send('Invalid URL');
         }
 
-        // If the url is an m3u8 playlist, fetch and rewrite it (allow query params)
-        if (url.includes('.m3u8')) {
+        // If the url is an m3u8 playlist, proxy and rewrite it
+        if (url.match(/\.m3u8($|\?)/)) {
             try {
-                // Fetch the m3u8 through the proxy (this API itself)
+                // Fetch the m3u8 playlist through the proxy
                 const m3u8Res = await fetch(url, { headers: req.headers });
                 if (!m3u8Res.ok) {
-                    return res.status(502).send('Failed to fetch m3u8');
+                    return res.status(502).send('Failed to fetch playlist');
                 }
                 let m3u8Text = await m3u8Res.text();
-                // Find the index after .m3u8 for base URL
-                const m3u8Idx = url.indexOf('.m3u8');
-                let baseUrl;
-                if (m3u8Idx !== -1) {
-                    // baseUrl is up to and including the last slash before .m3u8
-                    const lastSlash = url.lastIndexOf('/', m3u8Idx);
-                    baseUrl = url.substring(0, lastSlash + 1);
-                } else {
-                    baseUrl = url.substring(0, url.lastIndexOf('/') + 1);
-                }
+
+                // Parse and rewrite the playlist
+                const baseUrl = url.split('?')[0];
+                const baseDir = baseUrl.substring(0, baseUrl.lastIndexOf('/') + 1);
                 const lines = m3u8Text.split(/\r?\n/);
                 let rewritten = [];
                 for (let line of lines) {
-                    // If the line is a segment (not a comment or tag)
-                    if (line && !line.startsWith('#')) {
-                        if (line.startsWith('http://') || line.startsWith('https://')) {
-                            // If any segment is absolute, stop rewriting and return original
-                            res.setHeader('content-type', 'application/vnd.apple.mpegurl');
-                            return res.send(m3u8Text);
-                        } else {
-                            // Resolve relative segment URL using correct base
-                            const resolved = new URL(line, baseUrl).toString();
-                            rewritten.push(resolved);
-                            continue;
-                        }
+                    if (line.trim() === '' || line.startsWith('#')) {
+                        rewritten.push(line);
+                        continue;
                     }
-                    rewritten.push(line);
+                    if (line.startsWith('http://') || line.startsWith('https://')) {
+                        // If any segment is absolute, stop rewriting and return the playlist as-is
+                        res.setHeader('content-type', 'application/vnd.apple.mpegurl');
+                        return res.send(m3u8Text);
+                    }
+                    // Otherwise, resolve relative to the m3u8 URL
+                    let resolved = baseDir + line;
+                    rewritten.push(resolved);
                 }
-                const outM3u8 = rewritten.join('\n');
                 res.setHeader('content-type', 'application/vnd.apple.mpegurl');
-                return res.send(outM3u8);
-            } catch (e) {
-                return res.status(500).send('Error processing m3u8');
+                return res.send(rewritten.join('\n'));
+            } catch (err) {
+                return res.status(500).send('Error proxying playlist');
             }
         }
 
