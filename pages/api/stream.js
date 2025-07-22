@@ -14,11 +14,38 @@ const corsMiddleware = cors({
 
 export default async function handler(req, res) {
     corsMiddleware(req, res, async () => {
-        const { url, title, tmdb, proxy } = req.query;
+        const { url, title, tmdb, proxy, stream } = req.query;
 
-        if (proxy) {
+        if (stream) {
+            if (!url) return res.status(400).send("Missing URL");
+
             try {
-                const response = await fetch(proxy);
+                const upstreamRes = await fetch(url, {
+                    headers: {
+                        "User-Agent": "curl/7.64.1", // mimic your curl UA or VLC UA
+                        "Accept": "*/*",
+                        "Range": "bytes=0-",          // important for video streaming
+                    },
+                });
+
+                if (!upstreamRes.ok) {
+                    return res.status(upstreamRes.status).send(upstreamRes.statusText);
+                }
+
+                res.status(upstreamRes.status);
+                upstreamRes.body.pipe(res);
+            } catch (err) {
+                console.error(err);
+                res.status(500).send("Internal Server Error");
+            }
+            return;
+        }
+
+        const { url: queryUrl, title: queryTitle, tmdb: queryTmdb, proxy: queryProxy } = req.query;
+
+        if (queryProxy) {
+            try {
+                const response = await fetch(queryProxy);
                 if (!response.ok) {
                     return res.status(response.status).send('Failed to fetch proxy URL');
                 }
@@ -29,7 +56,7 @@ export default async function handler(req, res) {
                     if (line.startsWith('http://') || line.startsWith('https://')) {
                         return line;
                     } else if (line.trim() !== '' && !line.startsWith('#')) {
-                        const baseUrl = new URL(proxy);
+                        const baseUrl = new URL(queryProxy);
                         return new URL(line, baseUrl).toString();
                     }
                     return line;
@@ -48,9 +75,9 @@ export default async function handler(req, res) {
 
         // Fetch subtitles if tmdb param is present
         let subtitles = [];
-        if (tmdb) {
+        if (queryTmdb) {
             try {
-                const subRes = await fetch(`https://madplay.site/api/subtitle?id=${tmdb}`);
+                const subRes = await fetch(`https://madplay.site/api/subtitle?id=${queryTmdb}`);
                 if (subRes.ok) {
                     subtitles = await subRes.json();
                 }
@@ -59,17 +86,17 @@ export default async function handler(req, res) {
             }
         }
 
-        if (url) {
-            if (!url.startsWith('http')) {
+        if (queryUrl) {
+            if (!queryUrl.startsWith('http')) {
                 return res.status(400).send('Invalid URL');
             }
             // Inject the video source and title into the HTML for the player using window.source
-            html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.source = ${JSON.stringify(url)};</script>`);
-            if (title) {
-                html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.__PLAYER_TITLE__ = ${JSON.stringify(title)};</script>`);
+            html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.source = ${JSON.stringify(queryUrl)};</script>`);
+            if (queryTitle) {
+                html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.__PLAYER_TITLE__ = ${JSON.stringify(queryTitle)};</script>`);
             }
             // Inject subtitles as a JS variable
-            if (tmdb) {
+            if (queryTmdb) {
                 html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.__SUBTITLES__ = ${JSON.stringify(subtitles)};</script>`);
             }
         }
