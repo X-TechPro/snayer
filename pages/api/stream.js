@@ -10,28 +10,46 @@ import { pipeline } from 'stream';
 export default async function handler(req, res) {
     const { url, title, tmdb, m3u8, segment } = req.query;
 
+    // --- CORS preflight support ---
+    if (req.method === 'OPTIONS') {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range, Accept, Accept-Language, Referer, Origin, User-Agent, Cookie');
+        res.status(204).end();
+        return;
+    }
+
     // Proxy for m3u8 playlist
     if (m3u8) {
         try {
-            // --- CORS headers for all responses ---
             res.setHeader('Access-Control-Allow-Origin', '*');
-            res.setHeader('Access-Control-Allow-Methods', 'GET');
-            res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+            res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
+            res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range, Accept, Accept-Language, Referer, Origin, User-Agent, Cookie');
             // Optionally, cache-control for playlist/segments
             // res.setHeader('Cache-Control', 'public, max-age=60');
 
-            // Browser-like headers
-            const headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
-                'Accept': '*/*',
-                'Accept-Language': 'en-US,en;q=0.9,fr;q=0.8',
-                'Referer': 'https://hexawave3.xyz/',
-                'Origin': 'https://hexawave3.xyz/'
-                // 'Accept-Encoding': 'identity;q=1, *;q=0', // node-fetch does not support gzip by default
-            };
-            // m3u8 is the playlist URL
+            // Forward all safe headers from client, override Referer/Origin if needed
+            const hopByHop = [
+                'host','connection','keep-alive','proxy-authenticate','proxy-authorization','te','trailer','transfer-encoding','upgrade'
+            ];
+            const headers = {};
+            for (const [k, v] of Object.entries(req.headers)) {
+                if (!hopByHop.includes(k.toLowerCase())) {
+                    headers[k] = v;
+                }
+            }
+            // Force Referer/Origin to upstream if not present
+            if (!headers['referer']) headers['referer'] = 'https://hexawave3.xyz/';
+            if (!headers['origin']) headers['origin'] = 'https://hexawave3.xyz/';
+            // node-fetch does not support gzip by default, so force Accept-Encoding
+            headers['accept-encoding'] = 'identity;q=1, *;q=0';
+
             const playlistRes = await fetch(m3u8, { headers });
-            if (!playlistRes.ok) return res.status(502).send('Failed to fetch playlist');
+            if (!playlistRes.ok) {
+                const errText = await playlistRes.text();
+                res.status(playlistRes.status).send(errText || 'Failed to fetch playlist');
+                return;
+            }
             let playlistText = await playlistRes.text();
 
             // Get base URL for relative segments
@@ -58,26 +76,33 @@ export default async function handler(req, res) {
             // res.setHeader('Cache-Control', 'public, max-age=60'); // Optional
             return res.send(rewritten.join('\n'));
         } catch (e) {
-            return res.status(500).send('Error proxying m3u8');
+            res.status(500).send('Error proxying m3u8: ' + (e && e.message ? e.message : 'Unknown error'));
+            return;
         }
     }
 
     // Proxy for segment files
     if (segment) {
         try {
-            // Browser-like headers, forward Range if present
-            const headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
-                'Accept': '*/*',
-                'Accept-Language': 'en-US,en;q=0.9,fr;q=0.8',
-                'Referer': 'https://hexawave3.xyz/',
-                'Origin': 'https://hexawave3.xyz/'
-            };
-            if (req.headers['range']) {
-                headers['Range'] = req.headers['range'];
+            // Forward all safe headers from client, override Referer/Origin if needed
+            const hopByHop = [
+                'host','connection','keep-alive','proxy-authenticate','proxy-authorization','te','trailer','transfer-encoding','upgrade'
+            ];
+            const headers = {};
+            for (const [k, v] of Object.entries(req.headers)) {
+                if (!hopByHop.includes(k.toLowerCase())) {
+                    headers[k] = v;
+                }
             }
+            if (!headers['referer']) headers['referer'] = 'https://hexawave3.xyz/';
+            if (!headers['origin']) headers['origin'] = 'https://hexawave3.xyz/';
+            headers['accept-encoding'] = 'identity;q=1, *;q=0';
             const segRes = await fetch(segment, { headers });
-            if (!segRes.ok) return res.status(502).send('Failed to fetch segment');
+            if (!segRes.ok) {
+                const errText = await segRes.text();
+                res.status(segRes.status).send(errText || 'Failed to fetch segment');
+                return;
+            }
             // Forward headers for video streaming
             res.setHeader('content-type', segRes.headers.get('content-type') || 'application/octet-stream');
             // Forward range/partial content headers if present
@@ -96,7 +121,7 @@ export default async function handler(req, res) {
             return;
         } catch (e) {
             if (!res.headersSent) res.status(500);
-            return res.end('Error proxying segment');
+            return res.end('Error proxying segment: ' + (e && e.message ? e.message : 'Unknown error'));
         }
     }
 
