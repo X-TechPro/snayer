@@ -37,7 +37,16 @@ export default async function handler(req, res) {
                     return res.status(502).send('Failed to fetch m3u8');
                 }
                 let m3u8Text = await m3u8Res.text();
-                const baseUrl = url.substring(0, url.lastIndexOf('/') + 1);
+                // Find the index after .m3u8 for base URL
+                const m3u8Idx = url.indexOf('.m3u8');
+                let baseUrl;
+                if (m3u8Idx !== -1) {
+                    // baseUrl is up to and including the last slash before .m3u8
+                    const lastSlash = url.lastIndexOf('/', m3u8Idx);
+                    baseUrl = url.substring(0, lastSlash + 1);
+                } else {
+                    baseUrl = url.substring(0, url.lastIndexOf('/') + 1);
+                }
                 const lines = m3u8Text.split(/\r?\n/);
                 let rewritten = [];
                 for (let line of lines) {
@@ -48,7 +57,7 @@ export default async function handler(req, res) {
                             res.setHeader('content-type', 'application/vnd.apple.mpegurl');
                             return res.send(m3u8Text);
                         } else {
-                            // Resolve relative segment URL
+                            // Resolve relative segment URL using correct base
                             const resolved = new URL(line, baseUrl).toString();
                             rewritten.push(resolved);
                             continue;
