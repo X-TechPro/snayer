@@ -28,8 +28,8 @@ export default async function handler(req, res) {
             return res.status(400).send('Invalid URL');
         }
 
-        // If the url is an m3u8 playlist, fetch and rewrite it
-        if (url.endsWith('.m3u8')) {
+        // If the url is an m3u8 playlist, fetch and rewrite it (allow query params)
+        if (url.includes('.m3u8')) {
             try {
                 // Fetch the m3u8 through the proxy (this API itself)
                 const m3u8Res = await fetch(url, { headers: req.headers });
