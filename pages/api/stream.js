@@ -5,6 +5,7 @@ import fs from 'fs';
 import path from 'path';
 import fetch from 'node-fetch';
 import urlModule from 'url';
+import { pipeline } from 'stream';
 
 export default async function handler(req, res) {
     const { url, title, tmdb, m3u8, segment } = req.query;
@@ -12,10 +13,17 @@ export default async function handler(req, res) {
     // Proxy for m3u8 playlist
     if (m3u8) {
         try {
+            // --- CORS headers for all responses ---
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Access-Control-Allow-Methods', 'GET');
+            res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+            // Optionally, cache-control for playlist/segments
+            // res.setHeader('Cache-Control', 'public, max-age=60');
+
             // m3u8 is the playlist URL
             const playlistRes = await fetch(m3u8);
             if (!playlistRes.ok) return res.status(502).send('Failed to fetch playlist');
-            let playlist = await playlistRes.text();
+            let playlistText = await playlistRes.text();
 
             // Get base URL for relative segments
             const parsed = urlModule.parse(m3u8);
@@ -24,21 +32,23 @@ export default async function handler(req, res) {
             const fullBase = baseUrl + basePath;
 
             // Rewrite segment URIs
-            playlist = playlist.replace(/^(?!#)([^\r\n]+)$/gm, (line) => {
-                line = line.trim();
-                if (!line || line.startsWith('#')) return line;
-                if (/^https?:\/\//i.test(line)) {
+            // --- Robust playlist rewriting ---
+            const lines = playlistText.split(/\r?\n/);
+            const rewritten = lines.map((line) => {
+                const trimmed = line.trim();
+                if (!trimmed || trimmed.startsWith('#')) return line;
+                if (/^https?:\/\//i.test(trimmed)) {
                     // Absolute URL, stream directly
-                    return line;
+                    return trimmed;
                 } else {
                     // Relative path, rewrite to proxy
-                    // Option 1: Proxy through API (recommended for CORS)
-                    const proxied = `/api/stream?segment=${encodeURIComponent(urlModule.resolve(fullBase, line))}`;
+                    const proxied = `/api/stream?segment=${encodeURIComponent(urlModule.resolve(fullBase, trimmed))}`;
                     return proxied;
                 }
             });
             res.setHeader('content-type', 'application/vnd.apple.mpegurl');
-            return res.send(playlist);
+            // res.setHeader('Cache-Control', 'public, max-age=60'); // Optional
+            return res.send(rewritten.join('\n'));
         } catch (e) {
             return res.status(500).send('Error proxying m3u8');
         }
@@ -47,14 +57,27 @@ export default async function handler(req, res) {
     // Proxy for segment files
     if (segment) {
         try {
-            const segRes = await fetch(segment);
+            const headers = {
+                'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18',
+                'Referer': 'https://hexawave3.xyz/',
+                'Origin': ''
+            };
+            const segRes = await fetch(segment, { headers });
             if (!segRes.ok) return res.status(502).send('Failed to fetch segment');
             // Forward headers for video streaming
             res.setHeader('content-type', segRes.headers.get('content-type') || 'application/octet-stream');
-            segRes.body.pipe(res);
+            // res.setHeader('Cache-Control', 'public, max-age=60'); // Optional
+            // Robust stream piping with error handling
+            pipeline(segRes.body, res, (err) => {
+                if (err) {
+                    if (!res.headersSent) res.writeHead(500);
+                    res.end('Segment stream error');
+                }
+            });
             return;
         } catch (e) {
-            return res.status(500).send('Error proxying segment');
+            if (!res.headersSent) res.status(500);
+            return res.end('Error proxying segment');
         }
     }
 
