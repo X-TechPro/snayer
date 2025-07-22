@@ -1,101 +1,80 @@
+// Next.js API route for /api/stream
+
 import fs from 'fs';
 import path from 'path';
 import fetch from 'node-fetch';
-import cors from 'cors';
-
-// Configure CORS
-const corsMiddleware = cors({
-    origin: '*',
-    methods: ['GET'],
-    allowedHeaders: ['Content-Type']
-});
 
 export default async function handler(req, res) {
-    return corsMiddleware(req, res, async () => {
-        const { url, title, tmdb, proxy } = req.query;
+    const { url, title, tmdb } = req.query;
 
-        // Handle proxy requests
-        if (proxy) {
-            try {
-                // Preserve all query parameters from original URL
-                const fullUrl = new URL(decodeURIComponent(proxy));
-                
-                // Reconstruct URL with all original query parameters
-                const reconstructedUrl = fullUrl.origin + fullUrl.pathname + fullUrl.search;
-                
-                const proxyResponse = await fetch(reconstructedUrl);
-                if (!proxyResponse.ok) {
-                    return res.status(proxyResponse.status).send('Upstream server error');
-                }
+    const htmlPath = path.join(process.cwd(), 'public', 'index.html');
+    let html = fs.readFileSync(htmlPath, 'utf8');
 
-                const m3u8Content = await proxyResponse.text();
-                const basePath = getBasePath(reconstructedUrl);
-                const rewrittenContent = rewriteM3U8(m3u8Content, basePath);
-
-                res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-                return res.send(rewrittenContent);
-            } catch (error) {
-                console.error('Proxy error:', error);
-                return res.status(500).send('Internal server error');
-            }
-        }
-
-        // Handle player page requests
+    // Fetch subtitles if tmdb param is present
+    let subtitles = [];
+    if (tmdb) {
         try {
-            const htmlPath = path.join(process.cwd(), 'public', 'index.html');
-            let html = fs.readFileSync(htmlPath, 'utf8');
-            const injectionScripts = [];
-
-            if (url) {
-                const decodedUrl = decodeURIComponent(url);
-                injectionScripts.push(`window.source = ${JSON.stringify(decodedUrl)};`);
+            const subRes = await fetch(`https://madplay.site/api/subtitle?id=${tmdb}`);
+            if (subRes.ok) {
+                subtitles = await subRes.json();
             }
-
-            if (title) {
-                injectionScripts.push(`window.__PLAYER_TITLE__ = ${JSON.stringify(title)};`);
-            }
-
-            if (tmdb) {
-                try {
-                    const subResponse = await fetch(`https://madplay.site/api/subtitle?id=${tmdb}`);
-                    if (subResponse.ok) {
-                        const subtitles = await subResponse.json();
-                        injectionScripts.push(`window.__SUBTITLES__ = ${JSON.stringify(subtitles)};`);
-                    }
-                } catch (e) {
-                    console.error('Subtitle fetch error:', e);
-                }
-            }
-
-            if (injectionScripts.length > 0) {
-                const injectionPoint = '<script src="https://unpkg.com/lucide@latest"></script>';
-                html = html.replace(
-                    injectionPoint, 
-                    `${injectionPoint}\n<script>${injectionScripts.join('\n')}</script>`
-                );
-            }
-
-            res.setHeader('Content-Type', 'text/html');
-            return res.send(html);
-        } catch (error) {
-            console.error('HTML processing error:', error);
-            return res.status(500).send('Internal server error');
+        } catch (e) {
+            // ignore subtitle errors
         }
-    });
-}
+    }
 
-// Helper functions
-function getBasePath(fullUrl) {
-    const urlObj = new URL(fullUrl);
-    return `${urlObj.origin}${urlObj.pathname.substring(0, urlObj.pathname.lastIndexOf('/') + 1)}`;
-}
+    if (url) {
+        if (!url.startsWith('http')) {
+            return res.status(400).send('Invalid URL');
+        }
 
-function rewriteM3U8(content, basePath) {
-    return content
-        .split('\n')
-        .map(line => {
-            if (line.startsWith('#') || line.trim() === '') return line;
-            return line.startsWith('http') ? line : `${basePath}${line}`;
-        })
-        .join('\n');
+        // If the url is an m3u8 playlist, fetch and rewrite it
+        if (url.endsWith('.m3u8')) {
+            try {
+                // Fetch the m3u8 through the proxy (this API itself)
+                const m3u8Res = await fetch(url, { headers: req.headers });
+                if (!m3u8Res.ok) {
+                    return res.status(502).send('Failed to fetch m3u8');
+                }
+                let m3u8Text = await m3u8Res.text();
+                const baseUrl = url.substring(0, url.lastIndexOf('/') + 1);
+                const lines = m3u8Text.split(/\r?\n/);
+                let rewritten = [];
+                for (let line of lines) {
+                    // If the line is a segment (not a comment or tag)
+                    if (line && !line.startsWith('#')) {
+                        if (line.startsWith('http://') || line.startsWith('https://')) {
+                            // If any segment is absolute, stop rewriting and return original
+                            res.setHeader('content-type', 'application/vnd.apple.mpegurl');
+                            return res.send(m3u8Text);
+                        } else {
+                            // Resolve relative segment URL
+                            const resolved = new URL(line, baseUrl).toString();
+                            rewritten.push(resolved);
+                            continue;
+                        }
+                    }
+                    rewritten.push(line);
+                }
+                const outM3u8 = rewritten.join('\n');
+                res.setHeader('content-type', 'application/vnd.apple.mpegurl');
+                return res.send(outM3u8);
+            } catch (e) {
+                return res.status(500).send('Error processing m3u8');
+            }
+        }
+
+        // Otherwise, inject the video source and title into the HTML for the player using window.source
+        html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.source = ${JSON.stringify(url)};</script>`);
+        if (title) {
+            html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.__PLAYER_TITLE__ = ${JSON.stringify(title)};</script>`);
+        }
+        // Inject subtitles as a JS variable
+        if (tmdb) {
+            html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.__SUBTITLES__ = ${JSON.stringify(subtitles)};</script>`);
+        }
+    }
+
+    res.setHeader('content-type', 'text/html');
+    res.send(html);
 }
