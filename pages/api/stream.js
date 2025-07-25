@@ -5,6 +5,7 @@ import path from 'path';
 import fetch from 'node-fetch';
 
 export default async function handler(req, res) {
+    console.log("API Called with query:", req.query); // new log added
     const { url, title, tmdb } = req.query;
 
     const htmlPath = path.join(process.cwd(), 'public', 'index.html');
