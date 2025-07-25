@@ -28,8 +28,8 @@ export default async function handler(req, res) {
             return res.status(400).send('Invalid URL');
         }
 
-        // If the URL is an m3u8 playlist, handle segment rewriting
-        if (url.endsWith('.m3u8')) {
+        // If the URL contains .m3u8, handle segment rewriting
+        if (url.includes('.m3u8')) {
             try {
                 // Always use the full URL (with all query params)
                 const m3u8Res = await fetch(url, { headers: req.headers });
@@ -58,7 +58,6 @@ export default async function handler(req, res) {
                     }).join('\n');
 
                     // Serve the rewritten playlist as a data URL
-                    // (or you could serve via another endpoint, but here we inline)
                     const blobUrl = `data:application/vnd.apple.mpegurl;base64,${Buffer.from(rewritten).toString('base64')}`;
                     html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.source = ${JSON.stringify(blobUrl)};</script>`);
                 }
@@ -82,3 +81,4 @@ export default async function handler(req, res) {
     res.setHeader('content-type', 'text/html');
     res.send(html);
 }
+
