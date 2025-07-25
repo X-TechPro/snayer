@@ -24,6 +24,7 @@ export default async function handler(req, res) {
     }
 
     if (url) {
+        console.log("Received URL:", url); // debug log added
         if (!url.startsWith('http')) {
             return res.status(400).send('Invalid URL');
         }
