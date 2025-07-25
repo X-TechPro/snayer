@@ -5,7 +5,6 @@ import path from 'path';
 import fetch from 'node-fetch';
 
 export default async function handler(req, res) {
-    console.log("API Called with query:", req.query); // new log added
     const { url, title, tmdb } = req.query;
 
     const htmlPath = path.join(process.cwd(), 'public', 'index.html');
@@ -25,40 +24,54 @@ export default async function handler(req, res) {
     }
 
     if (url) {
-        console.log("Received URL:", url); // debug log added
         if (!url.startsWith('http')) {
             return res.status(400).send('Invalid URL');
         }
-        
+
+        // If the URL is an m3u8 playlist, handle segment rewriting
         if (url.endsWith('.m3u8')) {
-            // Fetch m3u8 file content and rewrite segments if necessary
-            const m3u8Res = await fetch(url);
-            if (!m3u8Res.ok) {
-                return res.status(400).send('Failed to fetch m3u8');
-            }
-            let m3u8Content = await m3u8Res.text();
-            const lines = m3u8Content.split('\n');
-            const firstSegment = lines.find(line => line.trim() !== '' && !line.startsWith('#'));
-            if (firstSegment && !firstSegment.startsWith('http')) {
-                const parsedUrl = new URL(url);
-                const baseUrl = parsedUrl.origin + parsedUrl.pathname.substring(0, parsedUrl.pathname.lastIndexOf('/') + 1);
-                for (let i = 0; i < lines.length; i++) {
-                    const line = lines[i];
-                    if (line.trim() !== '' && !line.startsWith('#')) {
-                        lines[i] = new URL(line, baseUrl).toString();
-                    }
+            try {
+                // Always use the full URL (with all query params)
+                const m3u8Res = await fetch(url, { headers: req.headers });
+                if (!m3u8Res.ok) {
+                    return res.status(502).send('Failed to fetch m3u8');
                 }
-                m3u8Content = lines.join('\n');
+                let m3u8Text = await m3u8Res.text();
+
+                // Find first segment line (not comment, not empty)
+                const lines = m3u8Text.split('\n');
+                const firstSegment = lines.find(line => line && !line.startsWith('#'));
+                if (firstSegment && (/^https?:\/\//.test(firstSegment))) {
+                    // First segment is absolute, return playlist as-is
+                    html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.source = ${JSON.stringify(url)};</script>`);
+                } else {
+                    // Need to resolve segments relative to m3u8 URL
+                    const m3u8UrlObj = new URL(url);
+                    const baseUrl = m3u8UrlObj.origin + m3u8UrlObj.pathname.replace(/[^\/]+$/, '');
+
+                    const rewritten = lines.map(line => {
+                        if (!line || line.startsWith('#')) return line;
+                        // If already absolute, leave as-is
+                        if (/^https?:\/\//.test(line)) return line;
+                        // Otherwise, resolve relative to m3u8 URL
+                        return baseUrl + line;
+                    }).join('\n');
+
+                    // Serve the rewritten playlist as a data URL
+                    // (or you could serve via another endpoint, but here we inline)
+                    const blobUrl = `data:application/vnd.apple.mpegurl;base64,${Buffer.from(rewritten).toString('base64')}`;
+                    html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.source = ${JSON.stringify(blobUrl)};</script>`);
+                }
+            } catch (err) {
+                return res.status(502).send('Error processing m3u8');
             }
-            html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', 
-                `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.source = ${JSON.stringify(m3u8Content)};</script>`);
         } else {
-            html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', 
-                `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.source = ${JSON.stringify(url)};</script>`);
+            // Non-m3u8: just inject the video source as before
+            html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.source = ${JSON.stringify(url)};</script>`);
         }
+
         if (title) {
-            html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', 
-                `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.__PLAYER_TITLE__ = ${JSON.stringify(title)};</script>`);
+            html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.__PLAYER_TITLE__ = ${JSON.stringify(title)};</script>`);
         }
         // Inject subtitles as a JS variable
         if (tmdb) {
