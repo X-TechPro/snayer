@@ -23,7 +23,7 @@ export default async function handler(req, res) {
                 res.setHeader('Content-Range', contentRange);
             }
         }
-        // If m3u8 playlist, rewrite segment URLs to absolute
+        // If m3u8 playlist, rewrite segment URLs to absolute and force download if browser requests
         if (contentType && contentType.includes('application/vnd.apple.mpegurl')) {
             const playlist = await response.text();
             // Get base URL (remove query params and filename)
@@ -40,6 +40,10 @@ export default async function handler(req, res) {
                 }
                 return line;
             }).join('\n');
+            // If browser requests (Accept header includes text/html), force download
+            if (req.headers['accept'] && req.headers['accept'].includes('text/html')) {
+                res.setHeader('Content-Disposition', 'attachment; filename="playlist.m3u8"');
+            }
             res.send(rewritten);
         } else if (response.body) {
             response.body.pipe(res);
