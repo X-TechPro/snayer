@@ -28,8 +28,8 @@ export default async function handler(req, res) {
             return res.status(400).send('Invalid URL');
         }
 
-        // If the URL contains .m3u8, handle segment rewriting
-        if (url.includes('.m3u8')) {
+        // Use regex to check for .m3u8 in the URL path or query
+        if (/\.(m3u8)(\?|$)/i.test(url)) {
             try {
                 // Always use the full URL (with all query params)
                 const m3u8Res = await fetch(url, { headers: req.headers });
