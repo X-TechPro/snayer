@@ -5,7 +5,9 @@ import path from 'path';
 import fetch from 'node-fetch';
 
 export default async function handler(req, res) {
-    const { url, title, tmdb } = req.query;
+    const { title, tmdb } = req.query;
+    // Decode the url param to preserve all query string parts (e.g. &s=...)
+    const url = req.query.url ? decodeURIComponent(req.query.url) : undefined;
 
     const htmlPath = path.join(process.cwd(), 'public', 'index.html');
     let html = fs.readFileSync(htmlPath, 'utf8');
@@ -27,8 +29,9 @@ export default async function handler(req, res) {
         if (!url.startsWith('http')) {
             return res.status(400).send('Invalid URL');
         }
-        // Inject the video source and title into the HTML for the player using window.source
-        html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.source = ${JSON.stringify(url)};</script>`);
+        // Inject the proxied video source into the HTML for the player using window.source
+        const proxiedUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
+        html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.source = ${JSON.stringify(proxiedUrl)};</script>`);
         if (title) {
             html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.__PLAYER_TITLE__ = ${JSON.stringify(title)};</script>`);
         }
