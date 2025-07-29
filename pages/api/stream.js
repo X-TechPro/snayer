@@ -30,8 +30,7 @@ export default async function handler(req, res) {
             return res.status(400).send('Invalid URL');
         }
         // Inject the proxied video source into the HTML for the player using window.source
-        const proxiedUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
-        html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.source = ${JSON.stringify(proxiedUrl)};</script>`);
+        html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.source = ${JSON.stringify(url)};</script>`);
         if (title) {
             html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.__PLAYER_TITLE__ = ${JSON.stringify(title)};</script>`);
         }
