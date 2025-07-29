@@ -13,6 +13,7 @@ const progressMap = new Map();
 function getProviders(tmdb_id, season, episode) {
     return [
         { name: 'Vidsrc', url: `https://player.vidsrc.co/embed/tv/${tmdb_id}/${season}/${episode}` },
+        { name: 'Vidsrc.vip', url: `https://vidsrc.vip/embed/movie/${tmdb_id}` },
         { name: 'AutoEmbed', url: `https://player.autoembed.cc/embed/tv/${tmdb_id}/${season}/${episode}` },
         { name: 'UEmbed', url: `https://uembed.site/?id=${tmdb_id}&season=${season}&episode=${episode}` },
         { name: 'P-Stream', url: `https://iframe.pstream.org/embed/tmdb-tv-${tmdb_id}/${season}/${episode}` },
@@ -35,7 +36,18 @@ async function sniffStreamUrl(tmdb_id, browserlessToken, onStatus, season = 1, e
             let mp4Info = [];
             let m3u8Info = [];
             await page.setRequestInterception(true);
-            page.on('request', req => req.continue());
+            page.on('request', req => {
+                // If scraping vidsrc.vip, set Origin and Referer headers
+                if (provider.name === 'Vidsrc.vip' || (req.url().includes('vidsrc.vip') || req.url().includes('niggaflix.xyz'))) {
+                    const headers = Object.assign({}, req.headers(), {
+                        'Origin': 'https://vidsrc.vip',
+                        'Referer': 'https://vidsrc.vip/'
+                    });
+                    req.continue({ headers });
+                } else {
+                    req.continue();
+                }
+            });
             page.on('response', async response => {
                 const url = response.url();
                 const headers = response.headers();
@@ -69,7 +81,32 @@ async function sniffStreamUrl(tmdb_id, browserlessToken, onStatus, season = 1, e
 }
 
 export default async function handler(req, res) {
-    const { tmdb, api, title, progress, s, e } = req.query;
+    const { tmdb, api, title, progress, s, e, url } = req.query;
+
+    // Proxy endpoint for vidsrc.vip and niggaflix.xyz URLs
+    if (url && (url.includes('vidsrc.vip') || url.includes('niggaflix.xyz'))) {
+        try {
+            // Forward request with required headers
+            const headers = {
+                'Origin': 'https://vidsrc.vip',
+                'Referer': 'https://vidsrc.vip/',
+                // Forward range header for seeking
+                ...(req.headers['range'] ? { 'Range': req.headers['range'] } : {})
+            };
+            const response = await fetch(url, { headers });
+            // Copy status and headers
+            res.status(response.status);
+            for (const [key, value] of response.headers.entries()) {
+                res.setHeader(key, value);
+            }
+            // Stream response
+            const readable = Readable.from(response.body);
+            readable.pipe(res);
+        } catch (err) {
+            res.status(500).send('Proxy error: ' + err.message);
+        }
+        return;
+    }
 
     // Parse season and episode from query (default to 1 if not provided)
     const season = s ? parseInt(s, 10) : 1;
