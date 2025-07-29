@@ -83,23 +83,35 @@ async function sniffStreamUrl(tmdb_id, browserlessToken, onStatus, season = 1, e
 export default async function handler(req, res) {
     const { tmdb, api, title, progress, s, e, url } = req.query;
 
-    // Proxy endpoint for vidsrc.vip and niggaflix.xyz URLs
-    if (url && (url.includes('vidsrc.vip') || url.includes('niggaflix.xyz'))) {
+    // Proxy endpoint for vidsrc.vip, niggaflix.xyz, and vidsrc.co URLs
+    if (url && (url.includes('vidsrc.vip') || url.includes('niggaflix.xyz') || url.includes('vidsrc.co'))) {
         try {
-            // Forward request with required headers
-            const headers = {
-                'Origin': 'https://vidsrc.vip',
-                'Referer': 'https://vidsrc.vip/',
-                // Forward range header for seeking
-                ...(req.headers['range'] ? { 'Range': req.headers['range'] } : {})
-            };
-            const response = await fetch(url, { headers });
-            // Copy status and headers
+            let targetUrl = url;
+            let headers = {};
+            if (url.includes('vidsrc.vip') || url.includes('niggaflix.xyz')) {
+                headers = {
+                    'Origin': 'https://vidsrc.vip',
+                    'Referer': 'https://vidsrc.vip/',
+                    ...(req.headers['range'] ? { 'Range': req.headers['range'] } : {})
+                };
+            } else if (url.includes('vidsrc.co')) {
+                // If it's a proxy.vidsrc.co link, extract the 'u' param
+                const match = url.match(/proxy\.vidsrc\.co\/\?u=([^&]+)/);
+                if (match) {
+                    // Decode the base mp4 url
+                    targetUrl = decodeURIComponent(match[1]);
+                }
+                headers = {
+                    'Origin': 'https://moviebox.ng',
+                    'Referer': 'https://moviebox.ng',
+                    ...(req.headers['range'] ? { 'Range': req.headers['range'] } : {})
+                };
+            }
+            const response = await fetch(targetUrl, { headers });
             res.status(response.status);
             for (const [key, value] of response.headers.entries()) {
                 res.setHeader(key, value);
             }
-            // Stream response
             const readable = Readable.from(response.body);
             readable.pipe(res);
         } catch (err) {
