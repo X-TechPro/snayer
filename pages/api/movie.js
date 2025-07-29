@@ -202,6 +202,13 @@ export default async function handler(req, res) {
     let streamUrl;
     try {
         streamUrl = await sniffStreamUrl(tmdb, browserlessToken);
+        // If the sniffed link is a proxy.vidsrc.co link, extract the base mp4 url from the u param
+        if (streamUrl && streamUrl.includes('proxy.vidsrc.co/?u=')) {
+            const match = streamUrl.match(/proxy\.vidsrc\.co\/\?u=([^&]+)/);
+            if (match) {
+                streamUrl = decodeURIComponent(match[1]);
+            }
+        }
     } catch (e) {
         return res.status(500).send('Stream sniffing failed: ' + e.message);
     }
