@@ -88,22 +88,24 @@ export default async function handler(req, res) {
         try {
             let targetUrl = url;
             let headers = {};
-            if (url.includes('vidsrc.vip') || url.includes('niggaflix.xyz')) {
+            // Special handling for vidsrc.co proxy links
+            if (url.includes('proxy.vidsrc.co')) {
+                let decodedUrl = decodeURIComponent(url);
+                let uMatch = decodedUrl.match(/[?&]u=([^&]+)/);
+                if (uMatch) {
+                    let uVal = decodeURIComponent(uMatch[1]);
+                    let baseUrl = uVal.split('&')[0];
+                    targetUrl = baseUrl;
+                    headers = {
+                        'Referer': 'https://moviebox.ng',
+                        'Origin': 'https://moviebox.ng',
+                        ...(req.headers['range'] ? { 'Range': req.headers['range'] } : {})
+                    };
+                }
+            } else if (url.includes('vidsrc.vip') || url.includes('niggaflix.xyz')) {
                 headers = {
                     'Origin': 'https://vidsrc.vip',
                     'Referer': 'https://vidsrc.vip/',
-                    ...(req.headers['range'] ? { 'Range': req.headers['range'] } : {})
-                };
-            } else if (url.includes('vidsrc.co')) {
-                // If it's a proxy.vidsrc.co link, extract the 'u' param
-                const match = url.match(/proxy\.vidsrc\.co\/\?u=([^&]+)/);
-                if (match) {
-                    // Decode the base mp4 url
-                    targetUrl = decodeURIComponent(match[1]);
-                }
-                headers = {
-                    'Origin': 'https://moviebox.ng',
-                    'Referer': 'https://moviebox.ng',
                     ...(req.headers['range'] ? { 'Range': req.headers['range'] } : {})
                 };
             }
@@ -207,13 +209,6 @@ export default async function handler(req, res) {
     let streamUrl;
     try {
         streamUrl = await sniffStreamUrl(tmdb, browserlessToken, undefined, season, episode);
-        // If the sniffed link is a proxy.vidsrc.co link, extract the base mp4 url from the u param
-        if (streamUrl && streamUrl.includes('proxy.vidsrc.co/?u=')) {
-            const match = streamUrl.match(/proxy\.vidsrc\.co\/\?u=([^&]+)/);
-            if (match) {
-                streamUrl = decodeURIComponent(match[1]);
-            }
-        }
     } catch (e) {
         return res.status(500).send('Stream sniffing failed: ' + e.message);
     }
