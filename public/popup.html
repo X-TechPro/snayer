@@ -189,9 +189,9 @@
             }
           } catch (e) {}
 
-          // If it's a proxy.vidsrc.co link, always stream via /api/movie to ensure headers
+          // If it's a proxy.vidsrc.co link, always stream via /api/stream with mbox=1 to ensure headers and player page
           if (isProxyVidsrc) {
-            streamLink = `/api/movie?url=${encodeURIComponent(urlToUse)}${title ? `&title=${encodeURIComponent(title)}` : ''}${tmdb ? `&tmdb=${encodeURIComponent(tmdb)}` : ''}${apiType === 'tv' ? `&type=tv&s=${season}&e=${episode}` : ''}&mbox=1`;
+            streamLink = `/api/stream?url=${encodeURIComponent(urlToUse)}${title ? `&title=${encodeURIComponent(title)}` : ''}${tmdb ? `&tmdb=${encodeURIComponent(tmdb)}` : ''}${apiType === 'tv' ? `&type=tv&s=${season}&e=${episode}` : ''}&mbox=1`;
           } else {
             // Otherwise, use /api/stream as before
             streamLink = `/api/stream?url=${encodeURIComponent(urlToUse)}${title ? `&title=${encodeURIComponent(title)}` : ''}${tmdb ? `&tmdb=${encodeURIComponent(tmdb)}` : ''}${apiType === 'tv' ? `&type=tv&s=${season}&e=${episode}` : ''}`;
