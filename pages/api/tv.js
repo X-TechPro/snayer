@@ -83,37 +83,23 @@ async function sniffStreamUrl(tmdb_id, browserlessToken, onStatus, season = 1, e
 export default async function handler(req, res) {
     const { tmdb, api, title, progress, s, e, url } = req.query;
 
-    // Proxy endpoint for vidsrc.vip, niggaflix.xyz, and vidsrc.co URLs
-    if (url && (url.includes('vidsrc.vip') || url.includes('niggaflix.xyz') || url.includes('vidsrc.co'))) {
+    // Proxy endpoint for vidsrc.vip and niggaflix.xyz URLs
+    if (url && (url.includes('vidsrc.vip') || url.includes('niggaflix.xyz'))) {
         try {
-            let targetUrl = url;
-            let headers = {};
-            // Special handling for vidsrc.co proxy links
-            if (url.includes('proxy.vidsrc.co')) {
-                let decodedUrl = decodeURIComponent(url);
-                let uMatch = decodedUrl.match(/[?&]u=([^&]+)/);
-                if (uMatch) {
-                    let uVal = decodeURIComponent(uMatch[1]);
-                    let baseUrl = uVal.split('&')[0];
-                    targetUrl = baseUrl;
-                    headers = {
-                        'Referer': 'https://moviebox.ng',
-                        'Origin': 'https://moviebox.ng',
-                        ...(req.headers['range'] ? { 'Range': req.headers['range'] } : {})
-                    };
-                }
-            } else if (url.includes('vidsrc.vip') || url.includes('niggaflix.xyz')) {
-                headers = {
-                    'Origin': 'https://vidsrc.vip',
-                    'Referer': 'https://vidsrc.vip/',
-                    ...(req.headers['range'] ? { 'Range': req.headers['range'] } : {})
-                };
-            }
-            const response = await fetch(targetUrl, { headers });
+            // Forward request with required headers
+            const headers = {
+                'Origin': 'https://vidsrc.vip',
+                'Referer': 'https://vidsrc.vip/',
+                // Forward range header for seeking
+                ...(req.headers['range'] ? { 'Range': req.headers['range'] } : {})
+            };
+            const response = await fetch(url, { headers });
+            // Copy status and headers
             res.status(response.status);
             for (const [key, value] of response.headers.entries()) {
                 res.setHeader(key, value);
             }
+            // Stream response
             const readable = Readable.from(response.body);
             readable.pipe(res);
         } catch (err) {

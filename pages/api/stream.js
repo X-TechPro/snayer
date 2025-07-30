@@ -7,8 +7,58 @@ import fetch from 'node-fetch';
 export default async function handler(req, res) {
     const { title, tmdb } = req.query;
     // Decode the url param to preserve all query string parts (e.g. &s=...)
-    const url = req.query.url ? decodeURIComponent(req.query.url) : undefined;
+    let url = req.query.url ? decodeURIComponent(req.query.url) : undefined;
 
+    // If the link is a vidsrc.co proxy, extract the 'u' param and stream with custom headers
+    if (url && url.includes('proxy.vidsrc.co')) {
+        // Handle double-encoded URLs
+        let parsedUrl = url;
+        try {
+            // If url is still encoded, decode again
+            while (parsedUrl.includes('%3A') || parsedUrl.includes('%2F')) {
+                parsedUrl = decodeURIComponent(parsedUrl);
+            }
+        } catch (e) {
+            // ignore decode errors
+        }
+        // Extract 'u' param from proxy.vidsrc.co
+        let uMatch = parsedUrl.match(/[?&]u=([^&]+)/);
+        let baseUrl = null;
+        if (uMatch && uMatch[1]) {
+            baseUrl = decodeURIComponent(uMatch[1]);
+            // Remove any trailing params (&o=... etc)
+            const ampIdx = baseUrl.indexOf('&');
+            if (ampIdx !== -1) {
+                baseUrl = baseUrl.substring(0, ampIdx);
+            }
+        }
+        if (baseUrl && baseUrl.startsWith('http')) {
+            // Stream with custom headers
+            try {
+                const headers = {
+                    'Referer': 'https://moviebox.ng',
+                    'Origin': 'https://moviebox.ng',
+                };
+                // Forward range header for seeking
+                if (req.headers['range']) {
+                    headers['Range'] = req.headers['range'];
+                }
+                const response = await fetch(baseUrl, { headers });
+                res.status(response.status);
+                for (const [key, value] of response.headers.entries()) {
+                    res.setHeader(key, value);
+                }
+                response.body.pipe(res);
+            } catch (err) {
+                res.status(500).send('Proxy error: ' + err.message);
+            }
+            return;
+        } else {
+            return res.status(400).send('Invalid proxy.vidsrc.co URL');
+        }
+    }
+
+    // ...existing code...
     const htmlPath = path.join(process.cwd(), 'public', 'index.html');
     let html = fs.readFileSync(htmlPath, 'utf8');
 
