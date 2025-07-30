@@ -167,9 +167,28 @@
           const urlParams = new URLSearchParams(window.location.search);
           title = urlParams.get('title') || '';
         } catch (e) {}
+        let streamLink = null;
         if (foundUrl) {
+          let urlToUse = foundUrl;
+          let customHeaders = false;
+          // Smart extraction for proxy.vidsrc.co links
+          try {
+            // Decode if double-encoded
+            let decoded = decodeURIComponent(urlToUse);
+            if (decoded.includes('proxy.vidsrc.co')) {
+              // Extract the 'u' param
+              const matchU = decoded.match(/[?&]u=([^&]+)/);
+              if (matchU && matchU[1]) {
+                let baseUrl = decodeURIComponent(matchU[1]);
+                // Remove any trailing &o= or &r= or &h= params
+                baseUrl = baseUrl.replace(/([&?]o=|[&?]r=|[&?]h=).*$/, '');
+                urlToUse = baseUrl;
+                customHeaders = true;
+              }
+            }
+          } catch (e) {}
           // Build /api/stream link, now also pass tmdb if present
-          const streamLink = `/api/stream?url=${encodeURIComponent(foundUrl)}${title ? `&title=${encodeURIComponent(title)}` : ''}${tmdb ? `&tmdb=${encodeURIComponent(tmdb)}` : ''}${apiType === 'tv' ? `&type=tv&s=${season}&e=${episode}` : ''}`;
+          streamLink = `/api/stream?url=${encodeURIComponent(urlToUse)}${title ? `&title=${encodeURIComponent(title)}` : ''}${tmdb ? `&tmdb=${encodeURIComponent(tmdb)}` : ''}${apiType === 'tv' ? `&type=tv&s=${season}&e=${episode}` : ''}${customHeaders ? '&mbox=1' : ''}`;
           // Automatically redirect to the stream page
           window.location.href = streamLink;
           // Optionally, still show a message while redirecting

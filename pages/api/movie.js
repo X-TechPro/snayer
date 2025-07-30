@@ -83,16 +83,24 @@ async function sniffStreamUrl(tmdb_id, browserlessToken, onStatus) {
 export default async function handler(req, res) {
     const { tmdb, api, title, progress, url } = req.query;
 
-    // Proxy endpoint for vidsrc.vip and niggaflix.xyz URLs
-    if (url && (url.includes('vidsrc.vip') || url.includes('niggaflix.xyz'))) {
+    // Proxy endpoint for vidsrc.vip, niggaflix.xyz, and mbox links
+    if (url && (url.includes('vidsrc.vip') || url.includes('niggaflix.xyz') || req.query.mbox === '1')) {
         try {
             // Forward request with required headers
-            const headers = {
-                'Origin': 'https://vidsrc.vip',
-                'Referer': 'https://vidsrc.vip/',
-                // Forward range header for seeking
-                ...(req.headers['range'] ? { 'Range': req.headers['range'] } : {})
-            };
+            let headers = {};
+            if (req.query.mbox === '1') {
+                headers = {
+                    'Origin': 'https://moviebox.ng',
+                    'Referer': 'https://moviebox.ng',
+                    ...(req.headers['range'] ? { 'Range': req.headers['range'] } : {})
+                };
+            } else {
+                headers = {
+                    'Origin': 'https://vidsrc.vip',
+                    'Referer': 'https://vidsrc.vip/',
+                    ...(req.headers['range'] ? { 'Range': req.headers['range'] } : {})
+                };
+            }
             const response = await fetch(url, { headers });
             // Copy status and headers
             res.status(response.status);
