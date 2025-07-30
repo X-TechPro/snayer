@@ -1,8 +1,8 @@
 // Next.js API route for /api/madplay
-import axios from 'axios';
-import cors from 'cors';
-import fs from 'fs';
-import path from 'path';
+// Refactored madplay API using centralized utilities
+const axios = require('axios');
+const { fetchSubtitles } = require('../../lib/subtitles');
+const { readHtml, injectHtml } = require('../../lib/html');
 
 export const config = {
   api: {
@@ -11,28 +11,7 @@ export const config = {
   },
 };
 
-// CORS middleware wrapper for Next.js API
-const corsMiddleware = cors({
-  origin: '*',
-  methods: ['GET', 'HEAD'],
-  allowedHeaders: ['*'],
-});
-
-function runMiddleware(req, res, fn) {
-  return new Promise((resolve, reject) => {
-    fn(req, res, (result) => {
-      if (result instanceof Error) {
-        return reject(result);
-      }
-      return resolve(result);
-    });
-  });
-}
-
-// Next.js API route handler
 export default async function mainHandler(req, res) {
-  await runMiddleware(req, res, corsMiddleware);
-
   const { tmdb, title, s, e } = req.query;
   if (!tmdb) return res.status(400).json({ error: 'Missing tmdb param' });
 
@@ -56,7 +35,6 @@ export default async function mainHandler(req, res) {
   try {
       const m3u8Res = await axios.get(playsrc);
       const m3u8 = m3u8Res.data;
-      // Parse m3u8 for all #EXT-X-STREAM-INF and their URLs
       const lines = m3u8.split('\n');
       let bestRes = 0;
       let bestUrl = null;
@@ -80,31 +58,15 @@ export default async function mainHandler(req, res) {
   }
 
   // Step 3: Fetch subtitles if tmdb param is present
-  let subtitles = [];
-  if (tmdb) {
-    try {
-      const subRes = await axios.get(`https://madplay.site/api/subtitle?id=${encodeURIComponent(tmdb)}`);
-      if (subRes.status === 200) {
-        subtitles = subRes.data;
-      }
-    } catch (e) {
-      // ignore subtitle errors
-    }
-  }
+  let subtitles = await fetchSubtitles(tmdb);
 
   // Step 4: Serve index.html with injected stream URL, title, and subtitles
-  const htmlPath = path.join(process.cwd(), 'public', 'index.html');
-  let html = fs.readFileSync(htmlPath, 'utf8');
-  // Inject the video source as window.source
-  html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.source = '/api/madplay/proxy?url=' + encodeURIComponent('${bestStreamUrl}');<\/script>`);
-  // Inject the title as window.__PLAYER_TITLE__
-  if (title) {
-    html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.__PLAYER_TITLE__ = ${JSON.stringify(title)};<\/script>`);
-  }
-  // Inject subtitles as window.__SUBTITLES__
-  if (subtitles && subtitles.length) {
-    html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.__SUBTITLES__ = ${JSON.stringify(subtitles)};<\/script>`);
-  }
+  let html = readHtml('index.html');
+  html = injectHtml(html, {
+    source: `/api/madplay/proxy?url=${encodeURIComponent(bestStreamUrl)}`,
+    title,
+    subtitles
+  });
   res.setHeader('content-type', 'text/html');
   res.send(html);
 }

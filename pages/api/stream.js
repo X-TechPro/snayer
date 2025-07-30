@@ -1,8 +1,9 @@
 // Next.js API route for /api/stream
 
-import fs from 'fs';
-import path from 'path';
-import fetch from 'node-fetch';
+// Refactored stream API using centralized utilities
+const { fetchSubtitles } = require('../../lib/subtitles');
+const { readHtml, injectHtml } = require('../../lib/html');
+const { proxyStream } = require('../../lib/proxy');
 
 export default async function handler(req, res) {
     const { title, tmdb } = req.query;
@@ -18,79 +19,29 @@ export default async function handler(req, res) {
             'Referer': 'https://moviebox.ng',
             ...(req.headers['range'] ? { 'Range': req.headers['range'] } : {})
         };
-        try {
-            const response = await fetch(url, { headers });
-            res.status(response.status);
-            for (const [key, value] of response.headers.entries()) {
-                if (key.toLowerCase() === 'content-disposition') continue;
-                res.setHeader(key, value);
-            }
-            res.setHeader('Access-Control-Allow-Origin', '*');
-            res.setHeader('Accept-Ranges', 'bytes');
-            res.setHeader('Content-Disposition', 'inline');
-            response.body.pipe(res);
-        } catch (err) {
-            res.status(500).send('Proxy error: ' + err.message);
-        }
-        return;
+        return proxyStream({ req, res, url, headers });
     }
 
     // If mbox=1, serve index.html and inject window.source as the proxy endpoint
     if (url && req.query.mbox === '1') {
-        const htmlPath = path.join(process.cwd(), 'public', 'index.html');
-        let html = fs.readFileSync(htmlPath, 'utf8');
-        // Inject window.source as the proxy endpoint
+        let html = readHtml('index.html');
         const proxyUrl = `/api/stream?url=${encodeURIComponent(url)}&mbox=1&raw=1`;
-        html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.source = ${JSON.stringify(proxyUrl)};window.__MBOX_HEADERS__ = true;</script>`);
-        if (title) {
-            html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.__PLAYER_TITLE__ = ${JSON.stringify(title)};</script>`);
-        }
-        if (tmdb) {
-            // Fetch subtitles
-            let subtitles = [];
-            try {
-                const subRes = await fetch(`https://madplay.site/api/subtitle?id=${tmdb}`);
-                if (subRes.ok) {
-                    subtitles = await subRes.json();
-                }
-            } catch (e) {}
-            html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.__SUBTITLES__ = ${JSON.stringify(subtitles)};</script>`);
-        }
+        let subtitles = await fetchSubtitles(tmdb);
+        html = injectHtml(html, { source: proxyUrl, title, subtitles, mboxHeaders: true });
         res.setHeader('content-type', 'text/html');
         res.send(html);
         return;
     }
 
     // Otherwise, serve index.html as before
-    const htmlPath = path.join(process.cwd(), 'public', 'index.html');
-    let html = fs.readFileSync(htmlPath, 'utf8');
-
-    // Fetch subtitles if tmdb param is present
-    let subtitles = [];
-    if (tmdb) {
-        try {
-            const subRes = await fetch(`https://madplay.site/api/subtitle?id=${tmdb}`);
-            if (subRes.ok) {
-                subtitles = await subRes.json();
-            }
-        } catch (e) {
-            // ignore subtitle errors
-        }
-    }
-
+    let html = readHtml('index.html');
+    let subtitles = await fetchSubtitles(tmdb);
     if (url) {
         if (!url.startsWith('http')) {
             return res.status(400).send('Invalid URL');
         }
-        html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.source = ${JSON.stringify(url)};</script>`);
-        if (title) {
-            html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.__PLAYER_TITLE__ = ${JSON.stringify(title)};</script>`);
-        }
-        if (tmdb) {
-            html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.__SUBTITLES__ = ${JSON.stringify(subtitles)};</script>`);
-        }
+        html = injectHtml(html, { source: url, title, subtitles });
     }
-
     res.setHeader('content-type', 'text/html');
     res.send(html);
 }
