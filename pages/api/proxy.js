@@ -48,7 +48,37 @@ export default async function handler(req, res) {
             }
             res.send(rewritten);
         } else if (response.body) {
-            response.body.pipe(res);
+            // --- SEGMENT REWRITE LOGIC ---
+            // If the requested file is a segment (ends with .ts or .webp/.ico/.jpg etc), always serve as TS
+            // Also handle base64-encoded segment names (e.g. /c2VnLTIzMjktdjEtYTEud2VicA==)
+            const urlParts = req.url.split('/');
+            let lastPart = urlParts[urlParts.length - 1].split('?')[0];
+            let decodedName = null;
+            try {
+                // Try to decode base64 if it looks like base64
+                if (/^[A-Za-z0-9+/=]+$/.test(lastPart) && lastPart.length % 4 === 0) {
+                    const buf = Buffer.from(lastPart, 'base64');
+                    decodedName = buf.toString('utf8');
+                }
+            } catch (e) {}
+            // If decodedName is a segment (seg-xxx.ts or seg-xxx.webp etc), use that for filename
+            let segName = null;
+            if (decodedName && /([\w-]+)\.(ts|webp|ico|jpg|jpeg|png|gif)$/i.test(decodedName)) {
+                segName = decodedName.replace(/\.(webp|ico|jpg|jpeg|png|gif)$/i, '.ts');
+            } else {
+                // fallback: try to match extension in original url
+                const segMatch = lastPart.match(/([\w-]+)\.(ts|webp|ico|jpg|jpeg|png|gif)$/i);
+                if (segMatch) {
+                    segName = segMatch[1] + '.ts';
+                }
+            }
+            if (segName) {
+                res.setHeader('Content-Type', 'video/mp2t');
+                res.setHeader('Content-Disposition', `inline; filename=\"${segName}\"`);
+                response.body.pipe(res);
+            } else {
+                response.body.pipe(res);
+            }
         } else {
             const buffer = await response.buffer();
             res.send(buffer);
