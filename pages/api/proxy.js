@@ -42,10 +42,7 @@ export default async function handler(req, res) {
                 }
                 return line;
             }).join('\n');
-            // If browser requests (Accept header includes text/html), force download
-            if (req.headers['accept'] && req.headers['accept'].includes('text/html')) {
-                res.setHeader('Content-Disposition', 'attachment; filename="playlist.m3u8"');
-            }
+            // Always serve m3u8 as inline for playback (never force download)
             res.send(rewritten);
         } else if (response.body) {
             // --- SEGMENT REWRITE LOGIC ---
