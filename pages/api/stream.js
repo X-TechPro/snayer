@@ -11,6 +11,26 @@ export default async function handler(req, res) {
     const { title, tmdb } = req.query;
     const url = req.query.url ? decodeURIComponent(req.query.url) : undefined;
 
+
+    // If vidfast=1, proxy the video file with VidFast headers
+    if (url && req.query.vidfast === '1') {
+        if (!url.startsWith('http')) {
+            return res.status(400).send('Invalid URL');
+        }
+        // Use VidFast-specific headers
+        const headers = {
+            'Origin': 'https://vidfast.pro',
+            'Referer': 'https://vidfast.pro/',
+            ...(req.headers['range'] ? { 'Range': req.headers['range'] } : {})
+        };
+        try {
+            await proxyStream(req, res, url, headers);
+        } catch (err) {
+            res.status(500).send('Proxy error: ' + err.message);
+        }
+        return;
+    }
+
     // If mbox=1 and raw=1, proxy the video file with required headers (for player fetch)
     if (url && req.query.mbox === '1' && req.query.raw === '1') {
         if (!url.startsWith('http')) {

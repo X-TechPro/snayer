@@ -46,12 +46,6 @@ export async function sniffStreamUrl(type, tmdb_id, browserlessToken, onStatus, 
                         'Referer': 'https://vidsrc.vip/'
                     });
                     req.continue({ headers });
-                } else if (provider.name === 'VidFast.pro' || req.url().includes('vidfast.pro')) {
-                    const headers = Object.assign({}, req.headers(), {
-                        'Origin': 'https://vidfast.pro',
-                        'Referer': 'https://vidfast.pro/'
-                    });
-                    req.continue({ headers });
                 } else {
                     req.continue();
                 }
@@ -69,14 +63,10 @@ export async function sniffStreamUrl(type, tmdb_id, browserlessToken, onStatus, 
             });
             await page.goto(provider.url, { waitUntil: 'networkidle2', timeout: 60000 });
             await new Promise(r => setTimeout(r, 3000));
-            if (provider.name === 'VidFast.pro') {
+            if (provider.name === 'VidFast.pro' && m3u8Info.length) {
                 // Prefer 1080p link (contains /MTA4MA==/)
-                const mp4_1080 = mp4Info.find(x => x.url.includes('/MTA4MA==/'));
-                if (mp4_1080) {
-                    finalUrl = mp4_1080.url;
-                } else if (mp4Info.length) {
-                    finalUrl = mp4Info[mp4Info.length - 1].url;
-                }
+                const m3u8_1080 = m3u8Info.find(x => x.url.includes('/MTA4MA==/'));
+                finalUrl = m3u8_1080 ? m3u8_1080.url : m3u8Info[0].url;
             } else if (mp4Info.length) {
                 finalUrl = mp4Info.sort((a, b) => (b.size - a.size) || (b.url.length - a.url.length))[0]?.url;
             } else if (m3u8Info.length) {
@@ -87,13 +77,15 @@ export async function sniffStreamUrl(type, tmdb_id, browserlessToken, onStatus, 
             // ignore error, mark as error
         }
         if (finalUrl) {
-            // Proxy the stream for VidFast.pro with correct headers
-            let proxiedUrl = finalUrl;
+            // For VidFast, always return a proxy URL for stream.js with VLC headers
             if (provider.name === 'VidFast.pro') {
-                proxiedUrl = `/api/proxy?url=${encodeURIComponent(finalUrl)}`;
+                const proxyUrl = `/api/stream?url=${encodeURIComponent(finalUrl)}&vidfast=1`;
+                if (onStatus) onStatus(i, 'completed', proxyUrl);
+                return proxyUrl;
+            } else {
+                if (onStatus) onStatus(i, 'completed', finalUrl);
+                return finalUrl;
             }
-            if (onStatus) onStatus(i, 'completed', proxiedUrl);
-            return proxiedUrl;
         } else {
             if (onStatus) onStatus(i, 'error');
         }
