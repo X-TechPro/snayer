@@ -1,12 +1,10 @@
 // Next.js API route for /api/stream
 
-
 import { proxyStream, getProxyHeaders, getVlcHeaders } from './shared/proxy';
 import { serveHtml } from './shared/html';
 import { corsMiddleware, runMiddleware } from './shared/utils';
 
-
-
+export default async function handler(req, res) {
     await runMiddleware(req, res, corsMiddleware);
     const { title, tmdb, vidfast } = req.query;
     const url = req.query.url ? decodeURIComponent(req.query.url) : undefined;
@@ -78,7 +76,6 @@ import { corsMiddleware, runMiddleware } from './shared/utils';
             }
         } catch (e) {}
     }
-
 
     if (url) {
         if (!url.startsWith('http')) {
