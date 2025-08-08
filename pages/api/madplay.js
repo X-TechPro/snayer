@@ -34,10 +34,15 @@ export default async function mainHandler(req, res) {
       return res.status(502).json({ error: 'Failed to fetch madplay playsrc', detail: e.message });
   }
 
-  // Step 2: Fetch master.m3u8 and pick best resolution
+  // Step 2: Fetch master.m3u8 and pick best resolution (with custom headers for madplay)
   let bestStreamUrl = null;
   try {
-      const m3u8Res = await axios.get(playsrc);
+      const m3u8Res = await axios.get(playsrc, {
+        headers: {
+          origin: 'https://uembed.site',
+          referer: 'https://uembed.site',
+        },
+      });
       const m3u8 = m3u8Res.data;
       // Parse m3u8 for all #EXT-X-STREAM-INF and their URLs
       const lines = m3u8.split('\n');

@@ -4,6 +4,7 @@ import puppeteer from 'puppeteer-core';
 export function getProviders(type, tmdb_id, season = 1, episode = 1) {
     if (type === 'tv') {
         return [
+            { name: 'VidFast.pro', url: `https://vidfast.pro/tv/${tmdb_id}/${season}/${episode}?autoPlay=true&server=Alpha` },
             { name: 'Vidsrc', url: `https://player.vidsrc.co/embed/tv/${tmdb_id}/${season}/${episode}` },
             { name: 'Vidsrc.vip', url: `https://vidsrc.vip/embed/movie/${tmdb_id}` },
             { name: 'AutoEmbed', url: `https://player.autoembed.cc/embed/tv/${tmdb_id}/${season}/${episode}` },
@@ -13,6 +14,7 @@ export function getProviders(type, tmdb_id, season = 1, episode = 1) {
     }
     // Default to movie
     return [
+        { name: 'VidFast.pro', url: `https://vidfast.pro/movie/${tmdb_id}?autoPlay=true&server=Alpha` },
         { name: 'Vidsrc', url: `https://player.vidsrc.co/embed/movie/${tmdb_id}` },
         { name: 'Vidsrc.vip', url: `https://vidsrc.vip/embed/movie/${tmdb_id}` },
         { name: 'AutoEmbed', url: `https://player.autoembed.cc/embed/movie/${tmdb_id}` },

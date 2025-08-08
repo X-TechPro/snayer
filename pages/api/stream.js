@@ -16,7 +16,15 @@ export default async function handler(req, res) {
         if (!url.startsWith('http')) {
             return res.status(400).send('Invalid URL');
         }
-        const headers = getProxyHeaders('mbox', req);
+        // Use madplay-specific headers if url is from madplay
+        let headers = getProxyHeaders('mbox', req);
+        if (url.includes('madplay.site')) {
+            headers = {
+                ...headers,
+                origin: 'https://uembed.site',
+                referer: 'https://uembed.site',
+            };
+        }
         try {
             await proxyStream(req, res, url, headers);
         } catch (err) {

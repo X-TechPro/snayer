@@ -8,7 +8,10 @@ export default async function handler(req, res) {
   if (!url || !url.startsWith('http')) return res.status(400).send('Invalid url');
   try {
     // Forward range header for seeking support
-    const headers = { origin: 'https://madplay.site' };
+    const headers = {
+      origin: 'https://uembed.site',
+      referer: 'https://uembed.site',
+    };
     if (req.headers['range']) {
       headers['range'] = req.headers['range'];
     }
