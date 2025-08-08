@@ -9,8 +9,8 @@ export default async function handler(req, res) {
     const { title, tmdb, vidfast } = req.query;
     const url = req.query.url ? decodeURIComponent(req.query.url) : undefined;
 
-    // If vidfast=1, proxy with VLC headers
-    if (url && req.query.vidfast === '1') {
+    // If vidfast=1, always proxy with VLC headers (for VidFast/proxy links)
+    if (url && (req.query.vidfast === '1' || url.includes('tgtria1dbw.xyz'))) {
         if (!url.startsWith('http')) {
             return res.status(400).send('Invalid URL');
         }
