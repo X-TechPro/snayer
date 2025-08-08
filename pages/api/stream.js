@@ -1,28 +1,23 @@
 // Next.js API route for /api/stream
 
 
-import { proxyStream, getProxyHeaders } from './shared/proxy';
+import { proxyStream, getProxyHeaders, getVlcHeaders } from './shared/proxy';
 import { serveHtml } from './shared/html';
 import { corsMiddleware, runMiddleware } from './shared/utils';
 
 
-export default async function handler(req, res) {
+
     await runMiddleware(req, res, corsMiddleware);
-    const { title, tmdb } = req.query;
+    const { title, tmdb, vidfast } = req.query;
     const url = req.query.url ? decodeURIComponent(req.query.url) : undefined;
 
-
-    // If vidfast=1, proxy the video file with VidFast headers
+    // If vidfast=1, proxy with VLC headers
     if (url && req.query.vidfast === '1') {
         if (!url.startsWith('http')) {
             return res.status(400).send('Invalid URL');
         }
-        // Use VidFast-specific headers
-        const headers = {
-            'Origin': 'https://vidfast.pro',
-            'Referer': 'https://vidfast.pro/',
-            ...(req.headers['range'] ? { 'Range': req.headers['range'] } : {})
-        };
+        // Use VLC headers for VidFast
+        let headers = getVlcHeaders(req);
         try {
             await proxyStream(req, res, url, headers);
         } catch (err) {
@@ -83,6 +78,7 @@ export default async function handler(req, res) {
             }
         } catch (e) {}
     }
+
 
     if (url) {
         if (!url.startsWith('http')) {

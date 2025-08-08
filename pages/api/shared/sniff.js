@@ -64,7 +64,7 @@ export async function sniffStreamUrl(type, tmdb_id, browserlessToken, onStatus, 
             await page.goto(provider.url, { waitUntil: 'networkidle2', timeout: 60000 });
             await new Promise(r => setTimeout(r, 3000));
             if (provider.name === 'VidFast.pro' && m3u8Info.length) {
-                // Prefer 1080p link (contains /MTA4MA==/)
+                // Always prefer 1080p link (contains /MTA4MA==/)
                 const m3u8_1080 = m3u8Info.find(x => x.url.includes('/MTA4MA==/'));
                 finalUrl = m3u8_1080 ? m3u8_1080.url : m3u8Info[0].url;
             } else if (mp4Info.length) {

@@ -1,3 +1,13 @@
+// Returns VLC-like headers for proxying VidFast streams
+export function getVlcHeaders(req) {
+    return {
+        'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20',
+        'Accept': '*/*',
+        'Connection': 'keep-alive',
+        'Icy-MetaData': '1',
+        ...(req.headers['range'] ? { 'Range': req.headers['range'] } : {})
+    };
+}
 // Proxy utilities for /api endpoints
 import fetch from 'node-fetch';
 import { Readable } from 'stream';
