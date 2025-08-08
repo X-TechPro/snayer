@@ -79,7 +79,7 @@ export async function sniffStreamUrl(type, tmdb_id, browserlessToken, onStatus, 
         if (finalUrl) {
             // For VidFast, always return a proxy URL for stream.js with VLC headers
             if (provider.name === 'VidFast.pro') {
-                const proxyUrl = `/api/stream?url=${encodeURIComponent(finalUrl)}&vidfast=1`;
+                const proxyUrl = `${encodeURIComponent(finalUrl)}&vidfast=1`;
                 if (onStatus) onStatus(i, 'completed', proxyUrl);
                 return proxyUrl;
             } else {
