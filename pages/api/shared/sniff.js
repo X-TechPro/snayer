@@ -4,9 +4,8 @@ import puppeteer from 'puppeteer-core';
 export function getProviders(type, tmdb_id, season = 1, episode = 1) {
     if (type === 'tv') {
         return [
-            { name: 'VidFast.pro', url: `https://vidfast.pro/tv/${tmdb_id}/${season}/${episode}?autoPlay=true&server=Alpha` },
-            { name: 'Vidsrc', url: `https://player.vidsrc.co/embed/tv/${tmdb_id}/${season}/${episode}` },
-            { name: 'Vidsrc.vip', url: `https://vidsrc.vip/embed/movie/${tmdb_id}` },
+            { name: 'VidEasy', url: `https://player.videasy.net/tv/${tmdb_id}/${season}/${episode}` },
+            { name: 'VidPro', url: `https://player.vidpro.top/embed/tv/${tmdb_id}/${season}/${episode}` },
             { name: 'AutoEmbed', url: `https://player.autoembed.cc/embed/tv/${tmdb_id}/${season}/${episode}` },
             { name: 'UEmbed', url: `https://uembed.site/?id=${tmdb_id}&season=${season}&episode=${episode}` },
             { name: 'P-Stream', url: `https://iframe.pstream.org/embed/tmdb-tv-${tmdb_id}/${season}/${episode}` },
@@ -14,9 +13,8 @@ export function getProviders(type, tmdb_id, season = 1, episode = 1) {
     }
     // Default to movie
     return [
-        { name: 'VidFast.pro', url: `https://vidfast.pro/movie/${tmdb_id}?autoPlay=true&server=Alpha` },
-        { name: 'Vidsrc', url: `https://player.vidsrc.co/embed/movie/${tmdb_id}` },
-        { name: 'Vidsrc.vip', url: `https://vidsrc.vip/embed/movie/${tmdb_id}` },
+        { name: 'VidEasy', url: `https://player.videasy.net/movie/${tmdb_id}` },
+        { name: 'VidPro', url: `https://player.vidpro.top/embed/movie/${tmdb_id}` },
         { name: 'AutoEmbed', url: `https://player.autoembed.cc/embed/movie/${tmdb_id}` },
         { name: 'UEmbed', url: `https://uembed.site/?id=${tmdb_id}` },
         { name: 'P-Stream', url: `https://iframe.pstream.org/embed/tmdb-movie-${tmdb_id}` },
@@ -62,12 +60,30 @@ export async function sniffStreamUrl(type, tmdb_id, browserlessToken, onStatus, 
                 }
             });
             await page.goto(provider.url, { waitUntil: 'networkidle2', timeout: 60000 });
-            await new Promise(r => setTimeout(r, 3000));
-            if (provider.name === 'VidFast.pro' && m3u8Info.length) {
-                // Always prefer 1080p link (contains /MTA4MA==/)
-                const m3u8_1080 = m3u8Info.find(x => x.url.includes('/MTA4MA==/'));
-                finalUrl = m3u8_1080 ? m3u8_1080.url : m3u8Info[0].url;
-            } else if (mp4Info.length) {
+            // Special handling for VidEasy: wait 1s then click the lone button (often inside a div)
+            if (provider.name === 'VidEasy' || provider.url.includes('videasy.net')) {
+                try {
+                    await page.waitForTimeout(1000);
+                    // Try to click the first <button> if present
+                    const btn = await page.$('button');
+                    if (btn) {
+                        await btn.click({ delay: 50 });
+                    } else {
+                        // Fallback: click a clickable div or the first element that looks like a play wrapper
+                        await page.evaluate(() => {
+                            const el = document.querySelector('div[role="button"]') || document.querySelector('div');
+                            if (el && typeof el.click === 'function') el.click();
+                        });
+                    }
+                    // allow time for the player to request manifests after the click
+                    await page.waitForTimeout(2000);
+                } catch (e) {
+                    // non-fatal; continue sniffing
+                }
+            } else {
+                await new Promise(r => setTimeout(r, 3000));
+            }
+            if (mp4Info.length) {
                 finalUrl = mp4Info.sort((a, b) => (b.size - a.size) || (b.url.length - a.url.length))[0]?.url;
             } else if (m3u8Info.length) {
                 finalUrl = m3u8Info.sort((a, b) => b.time - a.time)[0]?.url;
@@ -77,15 +93,8 @@ export async function sniffStreamUrl(type, tmdb_id, browserlessToken, onStatus, 
             // ignore error, mark as error
         }
         if (finalUrl) {
-            // For VidFast, always return a proxy URL for stream.js with VLC headers
-            if (provider.name === 'VidFast.pro') {
-                const proxyUrl = `${encodeURIComponent(finalUrl)}&vidfast=1`;
-                if (onStatus) onStatus(i, 'completed', proxyUrl);
-                return proxyUrl;
-            } else {
-                if (onStatus) onStatus(i, 'completed', finalUrl);
-                return finalUrl;
-            }
+            if (onStatus) onStatus(i, 'completed', finalUrl);
+            return finalUrl;
         } else {
             if (onStatus) onStatus(i, 'error');
         }
