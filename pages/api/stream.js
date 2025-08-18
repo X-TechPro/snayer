@@ -9,8 +9,8 @@ export default async function handler(req, res) {
     const { title, tmdb, vidfast } = req.query;
     const url = req.query.url ? decodeURIComponent(req.query.url) : undefined;
 
-    // If vidfast=1, always proxy with VLC headers (for VidFast/proxy links)
-    if (url && (req.query.vidfast === '1' || url.includes('tgtria1dbw.xyz'))) {
+    // If vidfast=1, or the URL looks like a VidFast worker, proxy with VLC headers
+    if (url && (req.query.vidfast === '1' || url.includes('tgtria1dbw.xyz') || url.includes('fastinternetz'))) {
         if (!url.startsWith('http')) {
             return res.status(400).send('Invalid URL');
         }
@@ -18,44 +18,53 @@ export default async function handler(req, res) {
         let headers = getVlcHeaders(req);
         try {
             const response = await fetch(url, { headers });
-            const contentType = response.headers.get('content-type');
-            res.setHeader('Content-Type', contentType || 'application/octet-stream');
-            if (contentType && contentType.includes('application/vnd.apple.mpegurl')) {
-                // m3u8 playlist: do not set Content-Disposition
+            const contentTypeRaw = response.headers.get('content-type') || '';
+            const contentType = String(contentTypeRaw).toLowerCase();
+            res.setHeader('Content-Type', contentTypeRaw || 'application/octet-stream');
+
+            // treat any m3u8 / mpegurl variant as a playlist
+            if (contentType.includes('mpegurl') || contentType.includes('application/x-mpegurl') || contentType.includes('application/vnd.apple.mpegurl') || contentType.includes('vnd.apple.mpegurl')) {
                 const playlist = await response.text();
-                res.send(playlist);
-            } else {
-                // For segments, set Content-Disposition for .ts only
-                const urlParts = req.url.split('/');
-                let lastPart = urlParts[urlParts.length - 1].split('?')[0];
-                let decodedName = null;
-                try {
-                    if (/^[A-Za-z0-9+/=]+$/.test(lastPart) && lastPart.length % 4 === 0) {
-                        const buf = Buffer.from(lastPart, 'base64');
-                        decodedName = buf.toString('utf8');
-                    }
-                } catch (e) {}
-                let segName = null;
-                if (decodedName && /([\w-]+)\.(ts|webp|ico|jpg|jpeg|png|gif)$/i.test(decodedName)) {
-                    segName = decodedName.replace(/\.(webp|ico|jpg|jpeg|png|gif)$/i, '.ts');
-                } else {
-                    const segMatch = lastPart.match(/([\w-]+)\.(ts|webp|ico|jpg|jpeg|png|gif)$/i);
-                    if (segMatch) {
-                        segName = segMatch[1] + '.ts';
-                    }
+                return res.send(playlist);
+            }
+
+            // For segments: compute a friendly filename when possible, then stream.
+            const urlParts = req.url.split('/');
+            let lastPart = urlParts[urlParts.length - 1].split('?')[0];
+            let decodedName = null;
+            try {
+                if (/^[A-Za-z0-9+/=]+$/.test(lastPart) && lastPart.length % 4 === 0) {
+                    const buf = Buffer.from(lastPart, 'base64');
+                    decodedName = buf.toString('utf8');
                 }
-                if (segName) {
-                    res.setHeader('Content-Type', 'video/mp2t');
-                    res.setHeader('Content-Disposition', `inline; filename=\"${segName}\"`);
-                    response.body.pipe(res);
-                } else {
-                    response.body.pipe(res);
+            } catch (e) {}
+            let segName = null;
+            if (decodedName && /([\w-]+)\.(ts|webp|ico|jpg|jpeg|png|gif)$/i.test(decodedName)) {
+                segName = decodedName.replace(/\.(webp|ico|jpg|jpeg|png|gif)$/i, '.ts');
+            } else {
+                const segMatch = lastPart.match(/([\w-]+)\.(ts|webp|ico|jpg|jpeg|png|gif)$/i);
+                if (segMatch) {
+                    segName = segMatch[1] + '.ts';
                 }
             }
+
+            if (segName) {
+                res.setHeader('Content-Type', 'video/mp2t');
+                res.setHeader('Content-Disposition', `inline; filename=\"${segName}\"`);
+            }
+
+            // response.body might be a Web ReadableStream (no .pipe) in some Node runtimes.
+            if (response.body && typeof response.body.pipe === 'function') {
+                return response.body.pipe(res);
+            }
+
+            // Fallback: buffer the body and send (works for both playlists and segments but uses memory)
+            const ab = await response.arrayBuffer();
+            const buf = Buffer.from(ab);
+            return res.end(buf);
         } catch (err) {
-            res.status(500).send('Proxy error: ' + err.message);
+            return res.status(500).send('Proxy error: ' + err.message);
         }
-        return;
     }
 
     // If mbox=1 and raw=1, proxy the video file with required headers (for player fetch)
