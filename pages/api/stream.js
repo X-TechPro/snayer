@@ -11,8 +11,8 @@ export default async function handler(req, res) {
 
     // No VidFast/VidRock handling present
 
-    // If mbox=1 and raw=1, proxy the video file with required headers (for player fetch)
-    if (url && req.query.mbox === '1' && req.query.raw === '1') {
+    // If prx=1 and raw=1, proxy the video file with required headers (for player fetch)
+    if (url && req.query.prx === '1' && req.query.raw === '1') {
         if (!url.startsWith('http')) {
             return res.status(400).send('Invalid URL');
         }
@@ -26,8 +26,8 @@ export default async function handler(req, res) {
         return;
     }
 
-    // If mbox=1, serve index.html and inject window.source as the proxy endpoint
-    if (url && req.query.mbox === '1') {
+    // If prx=1, serve index.html and inject window.source as the proxy endpoint
+    if (url && req.query.prx === '1') {
         let subtitles = [];
         if (tmdb) {
             try {
@@ -37,7 +37,7 @@ export default async function handler(req, res) {
                 }
             } catch (e) {}
         }
-        const proxyUrl = `/api/stream?url=${encodeURIComponent(url)}&mbox=1&raw=1`;
+    const proxyUrl = `/api/stream?url=${encodeURIComponent(url)}&prx=1&raw=1`;
         serveHtml(res, 'index.html', {
             streamUrl: proxyUrl,
             pageTitle: title,

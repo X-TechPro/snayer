@@ -11,10 +11,10 @@ import { getProgress, setProgress, clearProgress } from './shared/progress';
 export default async function handler(req, res) {
     const { tmdb, api, title, progress, url } = req.query;
 
-    // Proxy endpoint for vidsrc.vip, niggaflix.xyz, and mbox links
-    if (url && (url.includes('vidsrc.vip') || url.includes('niggaflix.xyz') || req.query.mbox === '1')) {
-        const type = req.query.mbox === '1' ? 'mbox' : 'vidsrc';
-        const headers = getProxyHeaders(type, req);
+    // Proxy endpoint for vidsrc.vip, niggaflix.xyz, and prx links
+    if (url && (url.includes('vidsrc.vip') || url.includes('niggaflix.xyz') || req.query.prx === '1')) {
+        const useProxy = req.query.prx === '1';
+        const headers = getProxyHeaders(req, url, useProxy);
         try {
             await proxyStream(req, res, url, headers);
         } catch (err) {

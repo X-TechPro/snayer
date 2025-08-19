@@ -189,9 +189,9 @@
             }
           } catch (e) {}
 
-          // If it's a proxy.vidsrc.co link, always redirect to /api/stream with mbox=1 for true proxy streaming
+          // If it's a proxy.vidsrc.co link, always redirect to /api/stream with prx=1 for true proxy streaming
           if (isProxyVidsrc) {
-            streamLink = `/api/stream?url=${encodeURIComponent(urlToUse)}&mbox=1`;
+            streamLink = `/api/stream?url=${encodeURIComponent(urlToUse)}&prx=1`;
           } else {
             // Otherwise, use /api/stream as before
             streamLink = `/api/stream?url=${encodeURIComponent(urlToUse)}${title ? `&title=${encodeURIComponent(title)}` : ''}${tmdb ? `&tmdb=${encodeURIComponent(tmdb)}` : ''}${apiType === 'tv' ? `&type=tv&s=${season}&e=${episode}` : ''}`;
