@@ -7,38 +7,51 @@ import { corsMiddleware, runMiddleware } from './shared/utils';
 export default async function handler(req, res) {
     await runMiddleware(req, res, corsMiddleware);
     const { title, tmdb } = req.query;
-    const url = req.query.url ? decodeURIComponent(req.query.url) : undefined;
+    // Extract full target URL even when the caller didn't encode it.
+    // Example problematic request: /api/stream?url=https://example.com/file.mp4?A=1&B=2&prx=1
+    // In that case Next/Node will parse B=2 as a separate query param. We reconstruct
+    // the original URL by grabbing the raw req.url and slicing out any other known params.
+    function extractFullUrl(req) {
+        if (!req.url) return req.query.url;
+        const raw = req.url;
+        const idx = raw.indexOf('url=');
+        if (idx === -1) return req.query.url;
+        let rest = raw.slice(idx + 4); // after 'url='
+        // Remove leading path part if present (shouldn't be), keep only query tail
+        // Find earliest occurrence of any other query key from req.query (except 'url')
+        const otherKeys = Object.keys(req.query).filter(k => k !== 'url');
+        let cutIndex = -1;
+        for (const key of otherKeys) {
+            const search = `&${key}=`;
+            const pos = rest.indexOf(search);
+            if (pos !== -1 && (cutIndex === -1 || pos < cutIndex)) {
+                cutIndex = pos;
+            }
+        }
+        if (cutIndex !== -1) {
+            rest = rest.slice(0, cutIndex);
+        }
+        try {
+            // Try to decode if encoded, otherwise return as-is
+            return decodeURIComponent(rest);
+        } catch (e) {
+            return rest;
+        }
+    }
+
+    const url = req.query.url ? extractFullUrl(req) : undefined;
 
     // No VidFast/VidRock handling present
 
     // If prx=1 and raw=1, proxy the video file with required headers (for player fetch)
     if (url && req.query.prx === '1' && req.query.raw === '1') {
-        // If the incoming `url` wasn't URL-encoded by the caller, some of the
-        // target URL's query params may have been promoted to top-level
-        // parameters on our endpoint (e.g. KEY2=... KEY3=...). Reconstruct the
-        // full target URL by appending any non-reserved query params back to it.
-        let fullUrl = url;
-        const reserved = new Set(['title', 'tmdb', 'prx', 'raw', 'type', 's', 'e', 'season', 'episode', 'progress', 'api', 'url']);
-        for (const [k, v] of Object.entries(req.query)) {
-            if (k === 'url' || reserved.has(k)) continue;
-            // skip empty keys
-            if (!k) continue;
-            const values = Array.isArray(v) ? v : [v];
-            for (const val of values) {
-                // Append using proper separators; values are added URL-encoded.
-                fullUrl += (fullUrl.includes('?') ? '&' : '?') + encodeURIComponent(k) + '=' + encodeURIComponent(val);
-            }
-        }
-
-        if (!fullUrl.startsWith('http')) {
+        if (!url.startsWith('http')) {
             return res.status(400).send('Invalid URL');
         }
-
-        // Build proxy headers (site-aware) and mark useProxy=true so Origin/Referer
-        // are derived from the target base URL
-        const headers = getProxyHeaders(req, fullUrl, true);
+    // Build proxy headers (site-aware)
+    const headers = getProxyHeaders(req, url, true);
         try {
-            await proxyStream(req, res, fullUrl, headers);
+            await proxyStream(req, res, url, headers);
         } catch (err) {
             res.status(500).send('Proxy error: ' + err.message);
         }
