@@ -18,18 +18,13 @@ export default async function handler(req, res) {
         if (idx === -1) return req.query.url;
         let rest = raw.slice(idx + 4); // after 'url='
         // Remove leading path part if present (shouldn't be), keep only query tail
-        // Find earliest occurrence of any other query key from req.query (except 'url')
-        const otherKeys = Object.keys(req.query).filter(k => k !== 'url');
-        let cutIndex = -1;
-        for (const key of otherKeys) {
-            const search = `&${key}=`;
-            const pos = rest.indexOf(search);
-            if (pos !== -1 && (cutIndex === -1 || pos < cutIndex)) {
-                cutIndex = pos;
-            }
-        }
-        if (cutIndex !== -1) {
-            rest = rest.slice(0, cutIndex);
+        // Only cut at known top-level server query keys (so we don't trim params that belong
+        // to the embedded URL). Example top-level keys: prx, raw, title, tmdb, type, s, e, progress, api
+        const topLevelKeys = ['prx', 'raw', 'title', 'tmdb', 'type', 's', 'e', 'progress', 'api'];
+        const regex = new RegExp("&(?:" + topLevelKeys.join('|') + ")=", 'i');
+        const m = regex.exec(rest);
+        if (m && typeof m.index === 'number') {
+            rest = rest.slice(0, m.index);
         }
         try {
             // Try to decode if encoded, otherwise return as-is
