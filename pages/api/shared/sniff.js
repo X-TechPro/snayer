@@ -79,6 +79,8 @@ export async function sniffStreamUrl(type, tmdb_id, browserlessToken, onStatus, 
         // If provider is ShowBox, fetch the JSON directly and return qualities
         if (provider.name === 'ShowBox') {
             try {
+                // Wait 20 seconds to allow the remote scraper to finish preparing the JSON
+                await new Promise(r => setTimeout(r, 20000));
                 const res = await fetch(provider.url, { headers: { accept: 'application/json' } });
                 if (res.ok) {
                     const json = await res.json();
