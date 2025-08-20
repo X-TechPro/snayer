@@ -342,10 +342,10 @@
           } catch {}
         }
         if (!source) return;
-  const isM3U8 = source.endsWith('.m3u8') || /[?&]m3u8=1(?:&|$)/.test(source);
         function setVideoSource(url) {
           while (video.firstChild) video.removeChild(video.firstChild);
           video.removeAttribute('src');
+          const isM3U8 = url && (url.endsWith('.m3u8') || /[?&]m3u8=1(?:&|$)/.test(url));
           if (isM3U8) {
             if (video.canPlayType('application/vnd.apple.mpegurl')) {
               video.src = url;
@@ -363,8 +363,14 @@
             video.appendChild(sourceEl);
             video.load();
           }
+          // store current source globally for UI logic
+          window.__CURRENT_SOURCE__ = url;
           seekbar.value = 0;
         }
+        // expose setter for menus
+        window.setVideoSource = setVideoSource;
+
+        // choose initial source (may be replaced by qualities default later)
         setVideoSource(source);
         // Autoplay when source is set
         //video.muted = true;
@@ -937,6 +943,96 @@
             }
           };
         }
+        // Render qualities/settings if provided
+        try {
+          const qualities = window.__QUALITIES__ || null;
+          if (qualities && qualities.servers) {
+            const settingsIcon = document.querySelector('i[data-lucide="settings"]');
+            const settingsBtn = settingsIcon ? settingsIcon.parentElement : null;
+            const settingsContainer = document.createElement('div');
+            settingsContainer.style.position = 'absolute';
+            settingsContainer.style.bottom = '56px';
+            settingsContainer.style.right = '8px';
+            settingsContainer.style.zIndex = '200';
+            settingsContainer.style.display = 'none';
+            settingsContainer.style.background = 'rgba(0,0,0,0.85)';
+            settingsContainer.style.backdropFilter = 'blur(6px)';
+            settingsContainer.style.borderRadius = '0.5em';
+            settingsContainer.style.padding = '8px';
+            settingsContainer.style.boxShadow = '0 6px 24px #0008';
+
+            const serverLabel = document.createElement('div'); serverLabel.textContent = 'Server'; serverLabel.style.color = '#fff'; serverLabel.style.fontWeight = '600'; serverLabel.style.marginBottom = '6px';
+            const serverSelect = document.createElement('select'); serverSelect.style.width = '220px'; serverSelect.style.marginBottom = '8px';
+            for (const s of Object.keys(qualities.servers)) {
+              const opt = document.createElement('option'); opt.value = s; opt.textContent = s; serverSelect.appendChild(opt);
+            }
+
+            const qualityLabel = document.createElement('div'); qualityLabel.textContent = 'Quality'; qualityLabel.style.color = '#fff'; qualityLabel.style.fontWeight = '600'; qualityLabel.style.marginBottom = '6px';
+            const qualitySelect = document.createElement('select'); qualitySelect.style.width = '220px';
+
+            settingsContainer.appendChild(serverLabel);
+            settingsContainer.appendChild(serverSelect);
+            settingsContainer.appendChild(qualityLabel);
+            settingsContainer.appendChild(qualitySelect);
+            document.body.appendChild(settingsContainer);
+
+            function repopulateQualitiesForServer(server) {
+              while (qualitySelect.firstChild) qualitySelect.removeChild(qualitySelect.firstChild);
+              const list = qualities.servers[server] || [];
+              for (const item of list) {
+                const o = document.createElement('option'); o.value = item.link; o.textContent = item.quality || item.quality; qualitySelect.appendChild(o);
+              }
+            }
+
+            let defaultServer = qualities.default?.server || null;
+            let defaultQualityLink = qualities.default?.link || null;
+            if (!defaultServer) {
+              for (const s of Object.keys(qualities.servers)) {
+                if ((qualities.servers[s] || []).some(i => i.quality === 'ORG')) { defaultServer = s; break; }
+              }
+            }
+            if (!defaultServer) defaultServer = Object.keys(qualities.servers)[0];
+            serverSelect.value = defaultServer;
+            repopulateQualitiesForServer(defaultServer);
+
+            if (defaultQualityLink) {
+              qualitySelect.value = defaultQualityLink;
+            } else {
+              const options = Array.from(qualitySelect.options);
+              const org = options.find(o => o.text === 'ORG');
+              if (org) qualitySelect.value = org.value;
+              else {
+                const p1080 = options.find(o => /1080/i.test(o.text));
+                qualitySelect.value = p1080 ? p1080.value : (options[0] ? options[0].value : '');
+              }
+            }
+
+            if (settingsBtn) {
+              settingsBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                settingsContainer.style.display = settingsContainer.style.display === 'none' ? 'block' : 'none';
+              });
+            }
+
+            serverSelect.addEventListener('change', () => {
+              repopulateQualitiesForServer(serverSelect.value);
+              const opts = Array.from(qualitySelect.options);
+              const org = opts.find(o => o.text === 'ORG');
+              if (org) qualitySelect.value = org.value;
+              else {
+                const p1080 = opts.find(o => /1080/i.test(o.text));
+                qualitySelect.value = p1080 ? p1080.value : (opts[0] ? opts[0].value : '');
+              }
+              const link = qualitySelect.value;
+              if (link && window.setVideoSource) { window.setVideoSource(link); video.play().catch(()=>{}); }
+            });
+
+            qualitySelect.addEventListener('change', () => {
+              const link = qualitySelect.value;
+              if (link && window.setVideoSource) { window.setVideoSource(link); video.play().catch(()=>{}); }
+            });
+          }
+        } catch (e) {}
       });
       // Close menu if controls disappear or click outside
       controls.addEventListener('mouseleave', closeSubtitleMenu);

@@ -76,6 +76,69 @@ export async function sniffStreamUrl(type, tmdb_id, browserlessToken, onStatus, 
         const provider = providers[i];
         if (onStatus) onStatus(i, 'loading');
         let finalUrl = null;
+        // If provider is ShowBox, fetch the JSON directly and return qualities
+        if (provider.name === 'ShowBox') {
+            try {
+                const res = await fetch(provider.url, { headers: { accept: 'application/json' } });
+                if (res.ok) {
+                    const json = await res.json();
+                    // json should be an object with server arrays as provided in request
+                    // Determine default selection: prefer ORG, else 1080P, else first available
+                    let defaultLink = null;
+                    let defaultServer = null;
+                    let defaultQuality = null;
+                    for (const serverName of Object.keys(json)) {
+                        const list = Array.isArray(json[serverName]) ? json[serverName] : [];
+                        for (const item of list) {
+                            if (item.quality === 'ORG') {
+                                defaultLink = item.link;
+                                defaultServer = serverName;
+                                defaultQuality = item.quality;
+                                break;
+                            }
+                        }
+                        if (defaultLink) break;
+                    }
+                    if (!defaultLink) {
+                        // try 1080P
+                        for (const serverName of Object.keys(json)) {
+                            const list = Array.isArray(json[serverName]) ? json[serverName] : [];
+                            for (const item of list) {
+                                if (item.quality && item.quality.toUpperCase().includes('1080')) {
+                                    defaultLink = item.link;
+                                    defaultServer = serverName;
+                                    defaultQuality = item.quality;
+                                    break;
+                                }
+                            }
+                            if (defaultLink) break;
+                        }
+                    }
+                    if (!defaultLink) {
+                        // fallback to first available
+                        const firstServer = Object.keys(json)[0];
+                        if (firstServer && Array.isArray(json[firstServer]) && json[firstServer].length) {
+                            defaultLink = json[firstServer][0].link;
+                            defaultServer = firstServer;
+                            defaultQuality = json[firstServer][0].quality;
+                        }
+                    }
+                    if (defaultLink) {
+                        if (onStatus) onStatus(i, 'completed', defaultLink);
+                        return { url: defaultLink, qualities: { servers: json, default: { server: defaultServer, quality: defaultQuality, link: defaultLink } } };
+                    } else {
+                        if (onStatus) onStatus(i, 'error');
+                        continue;
+                    }
+                } else {
+                    if (onStatus) onStatus(i, 'error');
+                    continue;
+                }
+            } catch (e) {
+                if (onStatus) onStatus(i, 'error');
+                continue;
+            }
+        }
         try {
             const browser = await puppeteer.connect({ browserWSEndpoint });
             const page = await browser.newPage();

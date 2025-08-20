@@ -75,11 +75,20 @@ export default async function handler(req, res) {
     if (!tmdb) return res.status(400).send('Missing tmdb param');
     const browserlessToken = api || process.env.BROWSERLESS_TOKEN;
     let streamUrl;
+    let qualities = null;
     try {
-        streamUrl = await sniffStreamUrl('movie', tmdb, browserlessToken);
+        const result = await sniffStreamUrl('movie', tmdb, browserlessToken);
+        if (!result) {
+            streamUrl = null;
+        } else if (typeof result === 'string') {
+            streamUrl = result;
+        } else if (result.url) {
+            streamUrl = result.url;
+            qualities = result.qualities;
+        }
     } catch (e) {
         return res.status(500).send('Stream sniffing failed: ' + e.message);
     }
     if (!streamUrl) return res.status(404).send('No stream found');
-    serveHtml(res, 'index.html', { loadingOverlay, streamUrl, pageTitle: title });
+    serveHtml(res, 'index.html', { loadingOverlay, streamUrl, pageTitle: title, qualities });
 }

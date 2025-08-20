@@ -21,6 +21,9 @@ export function serveHtml(res, file = 'index.html', options = {}) {
     if (options.subtitles) {
         html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.__SUBTITLES__ = ${JSON.stringify(options.subtitles)};</script>`);
     }
+    if (options.qualities) {
+        html = html.replace('<script src="https://unpkg.com/lucide@latest"></script>', `<script src="https://unpkg.com/lucide@latest"></script>\n<script>window.__QUALITIES__ = ${JSON.stringify(options.qualities)};</script>`);
+    }
     res.setHeader('content-type', 'text/html');
     res.send(html);
 }
