@@ -72,7 +72,7 @@ export default async function handler(req, res) {
 
         const showbox_link = constructShowboxLink(title, runtime, release_date);
 
-        const json = await fetchShowboxJson(showbox_link, 20000, 3000);
+        const json = await fetchShowboxJson(showbox_link, 30000, 2000);
 
         // If we didn't get JSON, return 502
         if (!json) {
