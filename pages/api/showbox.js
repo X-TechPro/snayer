@@ -4,8 +4,6 @@
 
 const TMDB_API_TOKEN = 'eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI2ZWFjNjM1ODA4YmRjMDJkZjI2ZDMwMjk0MGI0Y2EzNyIsIm5iZiI6MTc0ODY4NTIxNy43Mjg5OTk5LCJzdWIiOiI2ODNhZDFhMTkyMWI4N2IxYzk1Mzc4ODQiLCJzY29wZXMiOlsiYXBpX3JlYWQiXSwidmVyc2lvbiI6MX0.w-oWdRIxwlXKTpP42Yo87Mld5sqp8uNFpDHgrqB6a3U';
 
-import { setProgress, getProgress, clearProgress } from './shared/progress';
-
 async function getMovieData(tmdb_id) {
     const url = `https://api.themoviedb.org/3/movie/${tmdb_id}?language=en-US`;
     const headers = {
@@ -61,31 +59,43 @@ async function fetchShowboxJson(url, timeout = 20000, interval = 3000) {
     }
     return null;
 }
+
 export default async function handler(req, res) {
     const tmdb = req.query.tmdb || req.query.id || req.query.movie || '';
     if (!tmdb) return res.status(400).json({ error: 'Missing tmdb query parameter' });
 
-    // SSE progress endpoint
-    if (req.query.progress && tmdb) {
-        res.setHeader('Content-Type', 'text/event-stream');
-        res.setHeader('Cache-Control', 'no-cache');
-        res.setHeader('Connection', 'keep-alive');
-        res.flushHeaders && res.flushHeaders();
-        let state = getProgress(tmdb);
-        res.write(`data: ${JSON.stringify(state)}\n\n`);
-        const interval = setInterval(() => {
-            state = getProgress(tmdb);
-            if (state) {
-                res.write(`data: ${JSON.stringify(state)}\n\n`);
-                if (state.found !== null || (state.statuses && state.statuses.every(s => s === 'completed' || s === 'error'))) {
-                    clearInterval(interval);
-                    res.end();
-                }
-            }
-        }, 1000);
-        req.on('close', () => clearInterval(interval));
-        return;
-    }
+        // Fast path: when the client requests the page normally, serve a lightweight HTML
+        // immediately with a small "please wait 30 seconds" overlay and a client-side
+        // fetch that will request the same endpoint with &fetch=1 to get the real data.
+        // The heavy work (TMDB + Showbox polling) remains unchanged and runs only for
+        // the fetch=1 request.
+        if (!req.query.fetch) {
+                const { serveHtml } = await import('./shared/html');
+                const loadingOverlay = `
+<div id="please-wait-overlay" style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.65);color:#fff;z-index:9999;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;">
+    <div style="background:#111;padding:16px 20px;border-radius:8px;text-align:center;min-width:180px;">
+        <div style="font-size:16px;margin-bottom:8px;">Please wait 30 seconds</div>
+        <div id="please-wait-countdown" style="font-size:12px;opacity:0.9;">30</div>
+    </div>
+</div>
+<script>
+(function(){
+    var t=30;var el;try{el=document.getElementById('please-wait-countdown');}catch(e){}
+    function tick(){ if(el) el.textContent = t; t--; if(t<0) clearInterval(iv); }
+    tick(); var iv = setInterval(tick,1000);
+    // Ask the server for the real data (heavy work) without blocking initial page load
+    fetch(location.pathname + location.search + '&fetch=1').then(function(r){ return r.json(); }).then(function(data){
+        try{ if(data.pageTitle) window.__PLAYER_TITLE__ = data.pageTitle; }catch(e){}
+        try{ if(data.subtitles) window.__SUBTITLES__ = data.subtitles; }catch(e){}
+        try{ if(data.qualities) window.__QUALITIES__ = data.qualities; }catch(e){}
+        try{ if(data.streamUrl){ window.source = data.streamUrl; window.dispatchEvent(new Event('source-ready')); } }catch(e){}
+        var o=document.getElementById('please-wait-overlay'); if(o) o.parentNode.removeChild(o);
+    }).catch(function(){ var o=document.getElementById('please-wait-overlay'); if(o) o.querySelector('div').textContent='Still working...'; });
+})();
+</script>
+                `;
+                return serveHtml(res, 'index.html', { loadingOverlay });
+        }
 
     try {
         const movie = await getMovieData(String(tmdb));
@@ -95,57 +105,60 @@ export default async function handler(req, res) {
 
         const showbox_link = constructShowboxLink(title, runtime, release_date);
 
-        // Loading overlay with SSE client that will apply the stream when ready
-        const loadingOverlay = `\n<div id="loading-overlay" class="fixed inset-0 flex items-center justify-center bg-black bg-opacity-80 z-50">\n  <div class="flex flex-col items-center">\n    <svg class="animate-spin h-10 w-10 text-white mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path></svg>\n    <span id=\"please-wait-text\" class="text-white text-sm font-semibold">Please wait up to 30 seconds while we prepare the stream...</span>\n  </div>\n</div>\n<script>\n(function(){\n  function hideOverlay(){ const overlay=document.getElementById('loading-overlay'); if(overlay) overlay.style.display='none'; }\n  function onFound(found){ try{ if(found.streamUrl){ window.source = found.streamUrl; window.__QUALITIES__ = found.qualities || null; window.__SUBTITLES__ = found.subtitles || null; window.__PLAYER_TITLE__ = found.pageTitle || ''; window.dispatchEvent(new Event('source-ready')); } }catch(e){} }\n  if (window.source) { hideOverlay(); } else {\n    const evt = new EventSource('/api/showbox?tmdb=${encodeURIComponent(tmdb)}&progress=1');\n    evt.onmessage = function(ev){ try{ const data = JSON.parse(ev.data); if (data && data.found) { onFound(data.found); hideOverlay(); evt.close(); } else if (data && Array.isArray(data.statuses) && data.statuses.every(s=>s==='completed' || s==='error')) { // finished but no stream\n        const txt = document.getElementById('please-wait-text'); if(txt) txt.textContent = 'No stream found.'; evt.close();\n      } } catch(e){} };\n    window.addEventListener('source-ready', hideOverlay);\n    setTimeout(()=>{ const txt=document.getElementById('please-wait-text'); if(txt) txt.textContent='Still preparing the stream — you can keep this page open.'; },30000);\n  }\n})();\n</script>\n`;
+        const json = await fetchShowboxJson(showbox_link, 20000, 3000);
 
-        const { serveHtml } = await import('./shared/html');
+        // If we didn't get JSON, return 502
+        if (!json) {
+            return res.status(502).json({ error: 'Failed to retrieve showbox JSON' });
+        }
 
-        // Initialize progress and start background polling (non-blocking)
-        setProgress(tmdb, ['pending'], null);
-        (async () => {
-            try {
-                const json = await fetchShowboxJson(showbox_link, 30000, 3000);
-                if (!json) {
-                    setProgress(tmdb, ['error'], null);
-                    setTimeout(()=>clearProgress(tmdb), 60000);
-                    return;
-                }
-                const qualitiesPerServer = {};
-                Object.keys(json).forEach(server => {
-                    const arr = Array.isArray(json[server]) ? json[server] : [];
-                    qualitiesPerServer[server] = arr.map(item => ({ quality: item.quality, link: item.link }));
-                });
-                let defaultLink = null;
-                for (const server of Object.keys(qualitiesPerServer)) {
-                    const found = qualitiesPerServer[server].find(q => String(q.quality).toUpperCase() === 'ORG');
-                    if (found && found.link) { defaultLink = found.link; break; }
-                }
-                if (!defaultLink) {
-                    for (const server of Object.keys(qualitiesPerServer)) {
-                        const found = qualitiesPerServer[server].find(q => String(q.quality).toUpperCase().includes('1080'));
-                        if (found && found.link) { defaultLink = found.link; break; }
-                    }
-                }
-                if (!defaultLink) {
-                    outer: for (const server of Object.keys(qualitiesPerServer)) {
-                        for (const q of qualitiesPerServer[server]) {
-                            if (q.link) { defaultLink = q.link; break outer; }
-                        }
-                    }
-                }
-                let subtitles = [];
-                try { const subRes = await fetch(`https://madplay.site/api/subtitle?id=${tmdb}`); if (subRes.ok) subtitles = await subRes.json(); } catch(e){}
+        // Normalize qualities into an ordered list per server
+        // json is expected to be an object with server keys each mapping to an array of {quality, link}
+        const qualitiesPerServer = {};
+        Object.keys(json).forEach(server => {
+            const arr = Array.isArray(json[server]) ? json[server] : [];
+            qualitiesPerServer[server] = arr.map(item => ({ quality: item.quality, link: item.link }));
+        });
 
-                setProgress(tmdb, ['completed'], { streamUrl: defaultLink || '', qualities: qualitiesPerServer, pageTitle: title, subtitles });
-                setTimeout(()=>clearProgress(tmdb), 60000);
-            } catch (e) {
-                setProgress(tmdb, ['error'], null);
-                setTimeout(()=>clearProgress(tmdb), 60000);
+        // Choose default stream: prefer the first ORG quality across servers; else prefer first 1080P; else first available
+        let defaultLink = null;
+        // Search for ORG
+        for (const server of Object.keys(qualitiesPerServer)) {
+            const found = qualitiesPerServer[server].find(q => String(q.quality).toUpperCase() === 'ORG');
+            if (found && found.link) { defaultLink = found.link; break; }
+        }
+        if (!defaultLink) {
+            for (const server of Object.keys(qualitiesPerServer)) {
+                const found = qualitiesPerServer[server].find(q => String(q.quality).toUpperCase().includes('1080'));
+                if (found && found.link) { defaultLink = found.link; break; }
             }
-        })();
+        }
+        if (!defaultLink) {
+            // fallback to first link found
+            outer: for (const server of Object.keys(qualitiesPerServer)) {
+                for (const q of qualitiesPerServer[server]) {
+                    if (q.link) { defaultLink = q.link; break outer; }
+                }
+            }
+        }
 
-        // Serve page immediately
-        return serveHtml(res, 'index.html', { loadingOverlay, pageTitle: title });
+        // Fetch subtitles (same logic as stream.js)
+        let subtitles = [];
+        try {
+            const subRes = await fetch(`https://madplay.site/api/subtitle?id=${tmdb}`);
+            if (subRes.ok) subtitles = await subRes.json();
+        } catch (e) {}
+
+        // Serve player page and inject qualities + selected stream
+        const { serveHtml } = await import('./shared/html');
+        // Build options for serveHtml: streamUrl is defaultLink, qualities object for settings, pageTitle
+        const options = {
+            streamUrl: defaultLink || '',
+            qualities: qualitiesPerServer,
+            pageTitle: title,
+            subtitles
+        };
+        return serveHtml(res, 'index.html', options);
     } catch (e) {
         const status = e && e.status ? e.status : 500;
         const body = e && e.body ? e.body : undefined;
