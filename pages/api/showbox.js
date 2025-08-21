@@ -4,8 +4,7 @@
 
 const TMDB_API_TOKEN = 'eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI2ZWFjNjM1ODA4YmRjMDJkZjI2ZDMwMjk0MGI0Y2EzNyIsIm5iZiI6MTc0ODY4NTIxNy43Mjg5OTk5LCJzdWIiOiI2ODNhZDFhMTkyMWI4N2IxYzk1Mzc4ODQiLCJzY29wZXMiOlsiYXBpX3JlYWQiXSwidmVyc2lvbiI6MX0.w-oWdRIxwlXKTpP42Yo87Mld5sqp8uNFpDHgrqB6a3U';
 
-// In-memory job store for background scraping results (simple, non-persistent)
-const scrapingJobs = new Map();
+import { setProgress, getProgress, clearProgress } from './shared/progress';
 
 async function getMovieData(tmdb_id) {
     const url = `https://api.themoviedb.org/3/movie/${tmdb_id}?language=en-US`;
@@ -62,214 +61,94 @@ async function fetchShowboxJson(url, timeout = 20000, interval = 3000) {
     }
     return null;
 }
-
 export default async function handler(req, res) {
-        const tmdb = req.query.tmdb || req.query.id || req.query.movie || '';
-        if (!tmdb) return res.status(400).json({ error: 'Missing tmdb query parameter' });
+    const tmdb = req.query.tmdb || req.query.id || req.query.movie || '';
+    if (!tmdb) return res.status(400).json({ error: 'Missing tmdb query parameter' });
 
-        // Polling/status API: return scraping result or start background job
-        if (req.query.poll === '1' || req.query.status === '1') {
-                let job = scrapingJobs.get(String(tmdb));
-                if (!job) {
-                        // Start background scraping job and return started state
-                        job = { status: 'pending', startedAt: Date.now() };
-                        scrapingJobs.set(String(tmdb), job);
-                        (async () => {
-                                try {
-                                        const movie = await getMovieData(String(tmdb));
-                                        const title = movie.title || movie.original_title || '';
-                                        const runtime = typeof movie.runtime === 'number' ? movie.runtime : 0;
-                                        const release_date = movie.release_date || '';
-                                        const showbox_link = constructShowboxLink(title, runtime, release_date);
-
-                                        const json = await fetchShowboxJson(showbox_link, 20000, 3000);
-
-                                        if (!json) {
-                                                job.status = 'error';
-                                                job.error = 'Failed to retrieve showbox JSON';
-                                                return;
-                                        }
-
-                                        const qualitiesPerServer = {};
-                                        Object.keys(json).forEach(server => {
-                                                const arr = Array.isArray(json[server]) ? json[server] : [];
-                                                qualitiesPerServer[server] = arr.map(item => ({ quality: item.quality, link: item.link }));
-                                        });
-
-                                        let defaultLink = null;
-                                        for (const server of Object.keys(qualitiesPerServer)) {
-                                                const found = qualitiesPerServer[server].find(q => String(q.quality).toUpperCase() === 'ORG');
-                                                if (found && found.link) { defaultLink = found.link; break; }
-                                        }
-                                        if (!defaultLink) {
-                                                for (const server of Object.keys(qualitiesPerServer)) {
-                                                        const found = qualitiesPerServer[server].find(q => String(q.quality).toUpperCase().includes('1080'));
-                                                        if (found && found.link) { defaultLink = found.link; break; }
-                                                }
-                                        }
-                                        if (!defaultLink) {
-                                                outer: for (const server of Object.keys(qualitiesPerServer)) {
-                                                        for (const q of qualitiesPerServer[server]) {
-                                                                if (q.link) { defaultLink = q.link; break outer; }
-                                                        }
-                                                }
-                                        }
-
-                                        // Fetch subtitles (best-effort)
-                                        let subtitles = [];
-                                        try {
-                                                const subRes = await fetch(`https://madplay.site/api/subtitle?id=${tmdb}`);
-                                                if (subRes.ok) subtitles = await subRes.json();
-                                        } catch (e) {}
-
-                                        job.status = 'done';
-                                        job.data = {
-                                                streamUrl: defaultLink || '',
-                                                qualities: qualitiesPerServer,
-                                                subtitles,
-                                                title: title || ''
-                                        };
-                                } catch (e) {
-                                        job.status = 'error';
-                                        job.error = e && e.message ? e.message : String(e);
-                                }
-                        })();
-
-                        return res.json({ started: true, ready: false });
-                }
-
-                // If job exists, return its status
-                if (job.status === 'done') {
-                        return res.json({ ready: true, ...(job.data || {}) });
-                }
-                if (job.status === 'error') {
-                        return res.status(500).json({ ready: false, error: job.error || 'scrape_error' });
-                }
-                return res.json({ ready: false, started: true });
-        }
-
-        // Normal page request: respond immediately with the player page and a loading overlay
-        try {
-                // Try to fetch minimal movie metadata to show a title quickly
-                let title = '';
-                try {
-                        const movie = await getMovieData(String(tmdb));
-                        title = movie.title || movie.original_title || '';
-                } catch (e) {
-                        // ignore metadata errors; page will still render
-                }
-
-                const { serveHtml } = await import('./shared/html');
-
-                // Build a loading overlay (adapted popup) that polls this endpoint for status
-                const overlay = `
-<div id="showbox-overlay" class="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm">
-    <div class="relative w-full max-w-md overflow-hidden rounded-2xl bg-gradient-to-br from-black to-gray-900 shadow-2xl transition-all duration-500 hover:shadow-[0_0_50px_rgba(0,153,255,0.15)] flex flex-col">
-        <div class="absolute inset-0 bg-gradient-to-br from-[#0099ff]/5 via-transparent to-purple-500/5"></div>
-        <div class="absolute inset-0 bg-gradient-radial"></div>
-        <div class="absolute inset-0 rounded-2xl bg-gradient-border p-px"><div class="h-full w-full rounded-2xl bg-gradient-to-br from-black to-gray-900"></div></div>
-        <div class="relative p-8 pb-6 flex-shrink-0">
-            <div class="flex items-center justify-between mb-6">
-                <h2 class="bg-gradient-to-r from-[#0099ff] to-cyan-400 bg-clip-text text-2xl font-bold text-transparent tracking-wide">Scraping ShowBox</h2>
-                <div id="progress-badge" class="rounded-full bg-[#0099ff]/10 px-3 py-1 text-sm text-[#0099ff] font-medium backdrop-blur-sm">Processing</div>
-            </div>
-            <div class="h-px bg-gradient-to-r from-transparent via-white/30 to-transparent shadow-sm"></div>
-        </div>
-        <div class="relative flex-1 px-8 pb-8">
-            <div class="flex flex-col items-center justify-center">
-                <div class="w-20 h-20 rounded-full bg-gradient-to-br from-[#0099ff] to-cyan-400 flex items-center justify-center mb-6">
-                    <svg class="w-10 h-10 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="3" x2="9" y2="21"></line></svg>
-                </div>
-                <h3 class="text-xl font-bold text-[#0099ff] mb-2">ShowBox</h3>
-                <div id="status-indicator" class="flex items-center gap-2 rounded-full bg-[#0099ff]/10 px-4 py-2 mb-6">
-                    <svg id="status-spinner" class="h-4 w-4 animate-spin text-[#0099ff]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>
-                    <span id="status-text" class="text-sm text-[#0099ff] font-medium">Processing</span>
-                </div>
-                <div class="w-full mb-4">
-                    <div class="flex items-center justify-between mb-2">
-                        <span class="text-sm text-gray-400">Scraping progress</span>
-                        <span id="progress-percentage" class="text-sm font-medium text-[#0099ff]">0%</span>
-                    </div>
-                    <div class="w-full bg-gray-700/50 rounded-full h-2.5">
-                        <div id="progress-bar" class="bg-gradient-to-r from-[#0099ff] to-cyan-400 h-2.5 rounded-full transition-all duration-500" style="width: 0%"></div>
-                    </div>
-                </div>
-                <p class="text-xs text-gray-400 text-center mt-6">Please wait 20-30 seconds. If unsuccessful, please try again as the scraper can sometimes experience issues.</p>
-            </div>
-        </div>
-    </div>
-    <script>
-        (function(){
-            const progressBar = document.getElementById('progress-bar');
-            const progressPercentage = document.getElementById('progress-percentage');
-            const progressBadge = document.getElementById('progress-badge');
-            const statusIndicator = document.getElementById('status-indicator');
-            const statusSpinner = document.getElementById('status-spinner');
-            const statusText = document.getElementById('status-text');
-            const overlay = document.getElementById('showbox-overlay');
-            let progress = 0;
-            let pollInterval = null;
-            const tmdb = ${JSON.stringify(String(tmdb))};
-
-            function updateProgress(p){ progressBar.style.width = p + '%'; progressPercentage.textContent = Math.round(p) + '%'; }
-            function updateStatusText(text){ progressBadge.textContent = text; statusText.textContent = text; }
-
-            // Start fake progress
-            updateProgress(0);
-            updateStatusText('Processing');
-            const progressTimer = setInterval(()=>{
-                progress = Math.min(100, progress + (6 + Math.random()*12));
-                updateProgress(progress);
-                if(progress >= 98) clearInterval(progressTimer);
-            }, 2500);
-
-            // Poll server for result. This will also cause the server to start scraping on first poll.
-            async function poll(){
-                try{
-                    const res = await fetch('/api/showbox?tmdb=' + encodeURIComponent(tmdb) + '&poll=1');
-                    if(!res.ok){
-                        // Keep polling but show failed state if persistent
-                        return;
-                    }
-                    const j = await res.json();
-                    if(j.ready){
-                        clearInterval(pollInterval);
-                        clearInterval(progressTimer);
-                        updateProgress(100);
-                        updateStatusText('Complete');
-
-                        // Inject player variables and notify the player to load
-                        try{
-                            if(j.streamUrl) window.source = j.streamUrl;
-                            if(j.subtitles) window.__SUBTITLES__ = j.subtitles;
-                            if(j.qualities) window.__QUALITIES__ = j.qualities;
-                            if(j.title) window.__PLAYER_TITLE__ = j.title;
-                            // Notify player script
-                            window.dispatchEvent(new Event('source-ready'));
-                        }catch(e){}
-
-                        // Hide overlay and try autoplay after a short delay
-                        setTimeout(()=>{
-                            if(overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
-                            try{ const v = document.querySelector('video'); if(v){ v.play().catch(()=>{}); } }catch(e){}
-                        }, 600);
-                    }
-                }catch(e){
-                    // ignore and retry
+    // SSE progress endpoint
+    if (req.query.progress && tmdb) {
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+        res.flushHeaders && res.flushHeaders();
+        let state = getProgress(tmdb);
+        res.write(`data: ${JSON.stringify(state)}\n\n`);
+        const interval = setInterval(() => {
+            state = getProgress(tmdb);
+            if (state) {
+                res.write(`data: ${JSON.stringify(state)}\n\n`);
+                if (state.found !== null || (state.statuses && state.statuses.every(s => s === 'completed' || s === 'error'))) {
+                    clearInterval(interval);
+                    res.end();
                 }
             }
-            pollInterval = setInterval(poll, 2000);
-            // Kickstart immediately
-            poll();
-        })();
-    </script>
-</div>
-                `;
+        }, 1000);
+        req.on('close', () => clearInterval(interval));
+        return;
+    }
 
-                return serveHtml(res, 'index.html', { loadingOverlay: overlay, pageTitle: title || 'ShowBox' });
-        } catch (e) {
-                const status = e && e.status ? e.status : 500;
-                const body = e && e.body ? e.body : undefined;
-                return res.status(status).json({ error: e.message || 'Unknown error', details: body });
-        }
+    try {
+        const movie = await getMovieData(String(tmdb));
+        const title = movie.title || movie.original_title || '';
+        const runtime = typeof movie.runtime === 'number' ? movie.runtime : 0;
+        const release_date = movie.release_date || '';
+
+        const showbox_link = constructShowboxLink(title, runtime, release_date);
+
+        // Loading overlay with SSE client that will apply the stream when ready
+        const loadingOverlay = `\n<div id="loading-overlay" class="fixed inset-0 flex items-center justify-center bg-black bg-opacity-80 z-50">\n  <div class="flex flex-col items-center">\n    <svg class="animate-spin h-10 w-10 text-white mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path></svg>\n    <span id=\"please-wait-text\" class="text-white text-sm font-semibold">Please wait up to 30 seconds while we prepare the stream...</span>\n  </div>\n</div>\n<script>\n(function(){\n  function hideOverlay(){ const overlay=document.getElementById('loading-overlay'); if(overlay) overlay.style.display='none'; }\n  function onFound(found){ try{ if(found.streamUrl){ window.source = found.streamUrl; window.__QUALITIES__ = found.qualities || null; window.__SUBTITLES__ = found.subtitles || null; window.__PLAYER_TITLE__ = found.pageTitle || ''; window.dispatchEvent(new Event('source-ready')); } }catch(e){} }\n  if (window.source) { hideOverlay(); } else {\n    const evt = new EventSource('/api/showbox?tmdb=${encodeURIComponent(tmdb)}&progress=1');\n    evt.onmessage = function(ev){ try{ const data = JSON.parse(ev.data); if (data && data.found) { onFound(data.found); hideOverlay(); evt.close(); } else if (data && Array.isArray(data.statuses) && data.statuses.every(s=>s==='completed' || s==='error')) { // finished but no stream\n        const txt = document.getElementById('please-wait-text'); if(txt) txt.textContent = 'No stream found.'; evt.close();\n      } } catch(e){} };\n    window.addEventListener('source-ready', hideOverlay);\n    setTimeout(()=>{ const txt=document.getElementById('please-wait-text'); if(txt) txt.textContent='Still preparing the stream — you can keep this page open.'; },30000);\n  }\n})();\n</script>\n`;
+
+        const { serveHtml } = await import('./shared/html');
+
+        // Initialize progress and start background polling (non-blocking)
+        setProgress(tmdb, ['pending'], null);
+        (async () => {
+            try {
+                const json = await fetchShowboxJson(showbox_link, 30000, 3000);
+                if (!json) {
+                    setProgress(tmdb, ['error'], null);
+                    setTimeout(()=>clearProgress(tmdb), 60000);
+                    return;
+                }
+                const qualitiesPerServer = {};
+                Object.keys(json).forEach(server => {
+                    const arr = Array.isArray(json[server]) ? json[server] : [];
+                    qualitiesPerServer[server] = arr.map(item => ({ quality: item.quality, link: item.link }));
+                });
+                let defaultLink = null;
+                for (const server of Object.keys(qualitiesPerServer)) {
+                    const found = qualitiesPerServer[server].find(q => String(q.quality).toUpperCase() === 'ORG');
+                    if (found && found.link) { defaultLink = found.link; break; }
+                }
+                if (!defaultLink) {
+                    for (const server of Object.keys(qualitiesPerServer)) {
+                        const found = qualitiesPerServer[server].find(q => String(q.quality).toUpperCase().includes('1080'));
+                        if (found && found.link) { defaultLink = found.link; break; }
+                    }
+                }
+                if (!defaultLink) {
+                    outer: for (const server of Object.keys(qualitiesPerServer)) {
+                        for (const q of qualitiesPerServer[server]) {
+                            if (q.link) { defaultLink = q.link; break outer; }
+                        }
+                    }
+                }
+                let subtitles = [];
+                try { const subRes = await fetch(`https://madplay.site/api/subtitle?id=${tmdb}`); if (subRes.ok) subtitles = await subRes.json(); } catch(e){}
+
+                setProgress(tmdb, ['completed'], { streamUrl: defaultLink || '', qualities: qualitiesPerServer, pageTitle: title, subtitles });
+                setTimeout(()=>clearProgress(tmdb), 60000);
+            } catch (e) {
+                setProgress(tmdb, ['error'], null);
+                setTimeout(()=>clearProgress(tmdb), 60000);
+            }
+        })();
+
+        // Serve page immediately
+        return serveHtml(res, 'index.html', { loadingOverlay, pageTitle: title });
+    } catch (e) {
+        const status = e && e.status ? e.status : 500;
+        const body = e && e.body ? e.body : undefined;
+        return res.status(status).json({ error: e.message || 'Unknown error', details: body });
+    }
 }
