@@ -109,6 +109,13 @@ export default async function handler(req, res) {
             }
         }
 
+        // Fetch subtitles (same logic as stream.js)
+        let subtitles = [];
+        try {
+            const subRes = await fetch(`https://madplay.site/api/subtitle?id=${tmdb}`);
+            if (subRes.ok) subtitles = await subRes.json();
+        } catch (e) {}
+
         // Serve player page and inject qualities + selected stream
         const { serveHtml } = await import('./shared/html');
         // Build options for serveHtml: streamUrl is defaultLink, qualities object for settings, pageTitle
@@ -116,7 +123,7 @@ export default async function handler(req, res) {
             streamUrl: defaultLink || '',
             qualities: qualitiesPerServer,
             pageTitle: title,
-            subtitles: []
+            subtitles
         };
         return serveHtml(res, 'index.html', options);
     } catch (e) {

@@ -216,7 +216,7 @@
     </style>
   </head>
   <body class="w-full h-full">
-    <div id="player-container" class="absolute inset-0 w-full h-full">
+  <div id="player-container" class="absolute inset-0 w-full h-full" style="overflow:hidden;">
       <!-- Player Title -->
       <div class="player-title w-full bg-gradient-to-b from-black/90 via-black/60 to-transparent px-6 py-3 text-white font-black text-xl select-none pointer-events-none transition-opacity duration-300 absolute top-0 left-0 z-30" id="player-title">
         undefined
@@ -240,7 +240,7 @@
         </div>
       </div>
 
-      <video id="video" class="w-full h-full object-contain" preload="metadata"></video>
+  <video id="video" class="w-full h-full object-contain" preload="metadata" style="transform-origin:center center; transform:scale(1.25);"></video>
       <div id="controls" class="absolute bottom-0 w-full bg-gradient-to-t from-black via-black/40 to-transparent p-4 space-y-3 transition-all duration-300 ease-in-out">
         <!-- Custom Seekbar (replaces old input range) -->
         <div class="seekbar-wrapper" id="seekbar">
@@ -299,7 +299,7 @@
 
             <!-- settings -->
             <div class="relative">
-              <button id="settings-btn" class="text-white hover:text-[#0099ff] transition-all">
+              <button id="settings-btn" class="text-white hover:text-[#0099ff] transition-all relative group flex items-center">
                 <i data-lucide="settings" class="lucide w-6 h-6"></i>
               </button>
               <div id="settings-menu" style="display:none; position:absolute; right:0; bottom:100%; margin-bottom:8px; background:rgba(0,0,0,0.85); backdrop-filter:blur(8px); border-radius:8px; box-shadow:0 8px 30px #0008; z-index:120; padding:8px; min-width:220px; max-height:320px; overflow:auto;">
@@ -327,7 +327,7 @@
         if (titleDiv) titleDiv.textContent = playerTitle;
       });
 
-      const video = document.getElementById("video");
+  let video = document.getElementById("video");
       const playPauseBtn = document.getElementById("play-pause");
       const muteBtn = document.getElementById("mute");
       const volumeSlider = document.getElementById("volume");
@@ -339,7 +339,7 @@
       const spinnerOverlay = document.getElementById("spinner-overlay");
 
       // --- General video source selection for MP4 and HLS ---
-      (async () => {
+  (async () => {
         let source = window.source;
         if (!source) {
           try {
@@ -371,10 +371,12 @@
           }
           seekbar.value = 0;
         }
-        setVideoSource(source);
-        // Autoplay when source is set
-        //video.muted = true;
-        video.play().catch(() => {});
+  setVideoSource(source);
+  // record current playing link for settings check
+  window.__CURRENT_PLAYING__ = { link: source, server: null, quality: null };
+  // Autoplay when source is set
+  //video.muted = true;
+  video.play().catch(() => {});
       })();
 
       function formatTime(t) {
@@ -1001,11 +1003,15 @@
           subtitleDisplay.style.padding = '0';
         }
       });
-      // --- Quality / Settings menu and runtime source switching ---
+  // --- Quality / Settings menu and runtime source switching ---
       // Helper to set the player's source at runtime (supports mp4 and m3u8)
-      function setPlayerSource(url) {
+      function setPlayerSource(url, serverName, qualityLabel) {
         if (!url) return;
         const isM3U8 = url.endsWith('.m3u8') || /[?&]m3u8=1(?:&|$)/.test(url);
+        // Preserve playback time and playing state
+        const prevTime = (video && !isNaN(video.currentTime)) ? video.currentTime : 0;
+        const wasPlaying = (video && !video.paused);
+
         // Remove any Hls instances (simple approach: replace video element)
         const parent = video.parentElement;
         const newVideo = video.cloneNode(false);
@@ -1020,6 +1026,15 @@
         newVideo.addEventListener('canplaythrough', () => showSpinner(false));
         newVideo.addEventListener('seeking', () => showSpinner(true));
         newVideo.addEventListener('seeked', () => showSpinner(false));
+        // play/pause click should toggle and show controls (fix mobile behavior)
+        newVideo.addEventListener('click', () => {
+          newVideo.paused ? newVideo.play() : newVideo.pause();
+          showControlsAndCursor();
+          scheduleHide();
+          updateIcons();
+        });
+        // when paused via other means, ensure controls are visible on mobile
+        newVideo.addEventListener('pause', () => { showControlsAndCursor(); });
         // replace reference
         window.video = video = newVideo;
         // set source
@@ -1043,7 +1058,16 @@
           video.appendChild(sourceEl);
           video.load();
         }
-        video.play().catch(() => {});
+        // restore time and playing state after small delay to allow load
+        setTimeout(() => {
+          try {
+            if (!isNaN(prevTime) && prevTime > 0) video.currentTime = prevTime;
+          } catch (e) {}
+          if (wasPlaying) video.play().catch(() => {});
+        }, 250);
+
+        // update current playing metadata for settings menu
+        window.__CURRENT_PLAYING__ = { link: url, server: serverName || null, quality: qualityLabel || null };
       }
 
       // Render qualities/settings if injected
@@ -1082,8 +1106,14 @@
             a.style.textDecoration = 'none';
             a.onmouseenter = () => { a.style.background = 'rgba(255,255,255,0.03)'; };
             a.onmouseleave = () => { a.style.background = 'transparent'; };
+            // check if this is the currently playing entry
+            const current = window.__CURRENT_PLAYING__ || {};
+            const isCurrent = (current.link && q.link && current.link === q.link) || (current.server === server && current.quality === q.quality);
             a.textContent = (q.quality || 'auto') + ' — ' + (q.link ? q.link.replace(/^https?:\/\//, '').slice(0, 60) : 'no link');
-            a.onclick = function(e) { e.preventDefault(); if (q.link) setPlayerSource(q.link); settingsMenu.style.display = 'none'; };
+            if (isCurrent) {
+              a.innerHTML = '<span style="color:white;">' + (q.quality || 'auto') + '</span><i data-lucide="check" class="lucide w-4 h-4 ml-1 align-middle" style="color:#0099ff; float:right;"></i>';
+            }
+            a.onclick = function(e) { e.preventDefault(); if (q.link) setPlayerSource(q.link, server, q.quality); settingsMenu.style.display = 'none'; renderSettingsMenu(); };
             settingsList.appendChild(a);
           });
         });
@@ -1096,6 +1126,7 @@
         if (!settingsBtn || !settingsMenu) return;
         settingsBtn.addEventListener('click', function(e) {
           e.preventDefault();
+          e.stopPropagation(); // prevent document click from immediately closing
           if (settingsMenu.style.display === 'block') {
             settingsMenu.style.display = 'none';
           } else {
@@ -1107,6 +1138,16 @@
         document.addEventListener('click', function(ev) {
           if (!settingsMenu.contains(ev.target) && ev.target !== settingsBtn) {
             settingsMenu.style.display = 'none';
+          }
+        });
+
+        // Show controls on mousemove while in fullscreen (fix hover-in-fullscreen bug)
+        document.addEventListener('mousemove', function(e) {
+          const fsElem = document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement;
+          if (fsElem) {
+            // if in fullscreen, any mouse move should show controls for 3 seconds
+            showControlsAndCursor();
+            scheduleHide();
           }
         });
       });
