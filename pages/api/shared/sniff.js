@@ -67,81 +67,63 @@ export async function getProviders(type, tmdb_id, season = 1, episode = 1) {
 }
 
 export async function sniffStreamUrl(type, tmdb_id, browserlessToken, onStatus, season = 1, episode = 1) {
-    if (!browserlessToken) {
-        throw new Error('Missing BROWSERLESS_TOKEN environment variable or api param.');
-    }
-    const browserWSEndpoint = `wss://production-lon.browserless.io?token=${browserlessToken}`;
+    // Note: ShowBox is handled with simple fetch polling (no puppeteer required).
+    // Only require browserlessToken when we actually attempt to use puppeteer below.
+    const browserWSEndpoint = browserlessToken ? `wss://production-lon.browserless.io?token=${browserlessToken}` : null;
     const providers = await getProviders(type, tmdb_id, season, episode);
     for (let i = 0; i < providers.length; i++) {
         const provider = providers[i];
         if (onStatus) onStatus(i, 'loading');
         let finalUrl = null;
-        // If provider is ShowBox, fetch the JSON directly and return qualities
-        if (provider.name === 'ShowBox') {
-            try {
-                // Wait 20 seconds to allow the remote scraper to finish preparing the JSON
-                await new Promise(r => setTimeout(r, 20000));
-                const res = await fetch(provider.url, { headers: { accept: 'application/json' } });
-                if (res.ok) {
-                    const json = await res.json();
-                    // json should be an object with server arrays as provided in request
-                    // Determine default selection: prefer ORG, else 1080P, else first available
-                    let defaultLink = null;
-                    let defaultServer = null;
-                    let defaultQuality = null;
-                    for (const serverName of Object.keys(json)) {
-                        const list = Array.isArray(json[serverName]) ? json[serverName] : [];
-                        for (const item of list) {
-                            if (item.quality === 'ORG') {
-                                defaultLink = item.link;
-                                defaultServer = serverName;
-                                defaultQuality = item.quality;
-                                break;
-                            }
-                        }
-                        if (defaultLink) break;
-                    }
-                    if (!defaultLink) {
-                        // try 1080P
-                        for (const serverName of Object.keys(json)) {
-                            const list = Array.isArray(json[serverName]) ? json[serverName] : [];
-                            for (const item of list) {
-                                if (item.quality && item.quality.toUpperCase().includes('1080')) {
-                                    defaultLink = item.link;
-                                    defaultServer = serverName;
-                                    defaultQuality = item.quality;
+        try {
+            // Special-case ShowBox: open via fetch and poll for JSON (no puppeteer)
+            if (provider.name === 'ShowBox' || provider.url.includes('showbox')) {
+                // Kick off an initial GET to the ShowBox URL (may trigger backend generation)
+                try { await fetch(provider.url, { method: 'GET' }); } catch (e) { /* ignore */ }
+
+                const deadline = Date.now() + 20000; // 20 seconds
+                let json = null;
+                while (Date.now() < deadline) {
+                    try {
+                        const res = await fetch(provider.url, { headers: { accept: 'application/json' } });
+                        if (res && res.ok) {
+                            const text = await res.text();
+                            try {
+                                const obj = JSON.parse(text);
+                                if (obj && typeof obj === 'object') {
+                                    json = obj;
                                     break;
                                 }
+                            } catch (e) {
+                                // response not JSON yet
                             }
-                            if (defaultLink) break;
                         }
+                    } catch (e) {
+                        // ignore fetch errors while polling
                     }
-                    if (!defaultLink) {
-                        // fallback to first available
-                        const firstServer = Object.keys(json)[0];
-                        if (firstServer && Array.isArray(json[firstServer]) && json[firstServer].length) {
-                            defaultLink = json[firstServer][0].link;
-                            defaultServer = firstServer;
-                            defaultQuality = json[firstServer][0].quality;
-                        }
-                    }
-                    if (defaultLink) {
-                        if (onStatus) onStatus(i, 'completed', defaultLink);
-                        return { url: defaultLink, qualities: { servers: json, default: { server: defaultServer, quality: defaultQuality, link: defaultLink } } };
-                    } else {
-                        if (onStatus) onStatus(i, 'error');
-                        continue;
-                    }
+                    // wait 3s before next check
+                    await new Promise(r => setTimeout(r, 3000));
+                }
+
+                if (json) {
+                    // Flatten all server arrays into one list of sources
+                    const all = [];
+                    Object.values(json).forEach(arr => { if (Array.isArray(arr)) all.push(...arr); });
+                    const findQuality = q => all.find(item => item && item.quality && String(item.quality).toLowerCase() === String(q).toLowerCase());
+                    let pick = findQuality('ORG') || findQuality('1080P') || findQuality('1080p');
+                    if (!pick && all.length) pick = all[0];
+                    finalUrl = pick?.link || null;
+                }
+
+                // Completed or errored for ShowBox branch
+                if (finalUrl) {
+                    if (onStatus) onStatus(i, 'completed', finalUrl);
+                    return finalUrl;
                 } else {
                     if (onStatus) onStatus(i, 'error');
-                    continue;
+                    continue; // try next provider
                 }
-            } catch (e) {
-                if (onStatus) onStatus(i, 'error');
-                continue;
             }
-        }
-        try {
             const browser = await puppeteer.connect({ browserWSEndpoint });
             const page = await browser.newPage();
             let mp4Info = [];
