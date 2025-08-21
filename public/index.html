@@ -328,6 +328,9 @@
       });
 
   let video = document.getElementById("video");
+  // Hls.js instance and current hls URL (if any)
+  window.hlsInstance = window.hlsInstance || null;
+  window.currentHlsUrl = window.currentHlsUrl || null;
       const playPauseBtn = document.getElementById("play-pause");
       const muteBtn = document.getElementById("mute");
       const volumeSlider = document.getElementById("volume");
@@ -355,10 +358,20 @@
           if (isM3U8) {
             if (video.canPlayType('application/vnd.apple.mpegurl')) {
               video.src = url;
+              window.currentHlsUrl = url;
+              // no hlsInstance when native
+              window.hlsInstance = null;
             } else if (window.Hls) {
+              if (window.hlsInstance) {
+                try { window.hlsInstance.destroy(); } catch(e) {}
+                window.hlsInstance = null;
+                window.currentHlsUrl = null;
+              }
               const hls = new Hls();
               hls.loadSource(url);
               hls.attachMedia(video);
+              window.hlsInstance = hls;
+              window.currentHlsUrl = url;
             } else {
               video.outerHTML = '<div class="text-white p-8">Your browser does not support HLS playback.</div>';
             }
@@ -368,6 +381,8 @@
             sourceEl.type = 'video/mp4';
             video.appendChild(sourceEl);
             video.load();
+            // when switching to MP4, clear any HLS instance
+            if (window.hlsInstance) { try { window.hlsInstance.destroy(); } catch(e) {} window.hlsInstance = null; window.currentHlsUrl = null; }
           }
           seekbar.value = 0;
         }
@@ -1012,7 +1027,38 @@
         const prevTime = (video && !isNaN(video.currentTime)) ? video.currentTime : 0;
         const wasPlaying = (video && !video.paused);
 
-        // Remove any Hls instances (simple approach: replace video element)
+        // For HLS with Hls.js, attempt level switching to avoid reload
+        if (isM3U8 && window.Hls && window.hlsInstance && window.currentHlsUrl === url) {
+          // try to pick a level matching qualityLabel
+          try {
+            const levels = window.hlsInstance.levels || [];
+            if (qualityLabel && levels.length) {
+              // try exact height match or name match
+              const q = String(qualityLabel).toLowerCase();
+              let idx = -1;
+              for (let i = 0; i < levels.length; i++) {
+                const lev = levels[i];
+                const name = (lev.name || '').toLowerCase();
+                const height = lev.height || 0;
+                if (name.includes(q) || String(height) === q.replace(/[^0-9]/g, '')) { idx = i; break; }
+              }
+              if (idx === -1 && q === 'org') {
+                // org -> choose highest resolution
+                idx = levels.length - 1;
+              }
+              if (idx >= 0) {
+                window.hlsInstance.currentLevel = idx;
+                // update current playing metadata
+                window.__CURRENT_PLAYING__ = { link: url, server: serverName || null, quality: qualityLabel || null };
+                renderSettingsMenu();
+                return;
+              }
+            }
+          } catch (e) {}
+          // else fallthrough to reload source below
+        }
+
+        // Remove any Hls instances (simple approach: replace video element) for non-HLS or new HLS URL
         const parent = video.parentElement;
         const newVideo = video.cloneNode(false);
         parent.replaceChild(newVideo, video);
@@ -1043,10 +1089,16 @@
         if (isM3U8) {
           if (video.canPlayType('application/vnd.apple.mpegurl')) {
             video.src = url;
+            window.currentHlsUrl = url;
+            window.hlsInstance = null;
           } else if (window.Hls) {
+            // create and attach a new Hls instance
+            if (window.hlsInstance) { try { window.hlsInstance.destroy(); } catch(e) {} window.hlsInstance = null; window.currentHlsUrl = null; }
             const hls = new Hls();
             hls.loadSource(url);
             hls.attachMedia(video);
+            window.hlsInstance = hls;
+            window.currentHlsUrl = url;
           } else {
             video.outerHTML = '<div class="text-white p-8">Your browser does not support HLS playback.</div>';
             return;
@@ -1058,13 +1110,13 @@
           video.appendChild(sourceEl);
           video.load();
         }
-        // restore time and playing state after small delay to allow load
-        setTimeout(() => {
-          try {
-            if (!isNaN(prevTime) && prevTime > 0) video.currentTime = prevTime;
-          } catch (e) {}
+        // restore time and playing state exactly when metadata is ready
+        function restoreOnce() {
+          try { if (!isNaN(prevTime) && prevTime >= 0) video.currentTime = prevTime; } catch(e) {}
           if (wasPlaying) video.play().catch(() => {});
-        }, 250);
+          video.removeEventListener('loadedmetadata', restoreOnce);
+        }
+        video.addEventListener('loadedmetadata', restoreOnce);
 
         // update current playing metadata for settings menu
         window.__CURRENT_PLAYING__ = { link: url, server: serverName || null, quality: qualityLabel || null };
@@ -1109,7 +1161,7 @@
             // check if this is the currently playing entry
             const current = window.__CURRENT_PLAYING__ || {};
             const isCurrent = (current.link && q.link && current.link === q.link) || (current.server === server && current.quality === q.quality);
-            a.textContent = (q.quality || 'auto') + ' — ' + (q.link ? q.link.replace(/^https?:\/\//, '').slice(0, 60) : 'no link');
+            a.textContent = (q.quality || 'auto');
             if (isCurrent) {
               a.innerHTML = '<span style="color:white;">' + (q.quality || 'auto') + '</span><i data-lucide="check" class="lucide w-4 h-4 ml-1 align-middle" style="color:#0099ff; float:right;"></i>';
             }
