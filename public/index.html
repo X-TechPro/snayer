@@ -17,6 +17,17 @@
   /* Subtitle visual when empty should remain hidden but take layout */
   #subtitle-display.empty { display: none; }
 
+  /* Hide scrollbars globally (no visible scrollbars anywhere) */
+  html, body, * {
+    -ms-overflow-style: none; /* IE and Edge */
+    scrollbar-width: none; /* Firefox */
+  }
+  *::-webkit-scrollbar {
+    width: 0 !important;
+    height: 0 !important;
+    display: none !important;
+  }
+
       html, body {
         margin: 0;
         padding: 0;
@@ -293,9 +304,9 @@
             <button class="text-white hover:text-[#0099ff] transition-all relative group">
               <i data-lucide="message-square" class="lucide w-6 h-6"></i>
               <div class="absolute bottom-full right-1/2 translate-x-1/2 mb-2 w-40 bg-black/80 backdrop-blur-sm
-                          rounded-md shadow-lg p-2 text-sm text-left opacity-0 invisible
+                          rounded-md shadow-none p-2 text-sm text-left opacity-0 invisible
                           group-hover:opacity-100 group-hover:visible transition-all duration-200">
-                <p class="font-semibold mb-1 px-2">Subtitles</p>
+                <p class="font-semibold mb-1 px-2" style="color:#06b6d4">Subtitles</p>
                 <a class="block px-2 py-1 hover:bg-white/10 rounded" href="#">Off</a>
                 <a class="block px-2 py-1 hover:bg-white/10 rounded bg-white/10 text-[#0099ff]" href="#">English</a>
                 <a class="block px-2 py-1 hover:bg-white/10 rounded" href="#">Español</a>
@@ -307,9 +318,9 @@
               <button id="settings-btn" class="text-white hover:text-[#0099ff] transition-all relative group flex items-center">
                 <i data-lucide="settings" class="lucide w-6 h-6"></i>
               </button>
-              <div id="settings-menu" style="display:none; position:absolute; right:0; bottom:100%; margin-bottom:8px; background:transparent; z-index:120; padding:8px; min-width:260px; max-height:360px; overflow:auto;">
-                <div style="background:rgba(0,0,0,0.85); backdrop-filter:blur(10px); border-radius:10px; box-shadow:0 12px 40px #0008; padding:10px;">
-                  <div style="color:#fff; font-weight:700; padding:6px 8px;">Quality / Server</div>
+              <div id="settings-menu" style="display:none; position:absolute; right:0; bottom:100%; margin-bottom:8px; background:transparent; z-index:120; padding:8px; min-width:260px; overflow:auto;">
+                <div style="background:rgba(0,0,0,0.85); backdrop-filter:blur(10px); border-radius:10px; box-shadow:none; padding:10px;">
+                  <div style="color:#06b6d4; font-weight:700; padding:6px 8px;">Quality / Server</div>
                   <div id="settings-list" style="color:#fff;"></div>
                 </div>
               </div>
@@ -920,7 +931,8 @@
         subtitleMenuDiv.style.background = 'rgba(0,0,0,0.85)';
         subtitleMenuDiv.style.backdropFilter = 'blur(8px)';
         subtitleMenuDiv.style.borderRadius = '0.5em';
-        subtitleMenuDiv.style.boxShadow = '0 4px 24px #0008';
+  // remove box-shadow for cleaner UI
+  subtitleMenuDiv.style.boxShadow = 'none';
         subtitleMenuDiv.style.display = 'none';
         subtitleMenuDiv.style.position = 'absolute';
         subtitleMenuDiv.style.zIndex = '100';
