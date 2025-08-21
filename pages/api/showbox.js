@@ -28,7 +28,19 @@ function constructShowboxLink(title, runtime, release_date) {
     return `https://showbox-five.vercel.app/api/scrape?title=${safeTitle}&year=${year}&rt=${runtime || 0}&type=1`;
 }
 
-async function fetchShowboxJson(url, timeout = 20000, interval = 3000) {
+async function fetchShowboxJson(url, timeout = 30000, interval = 2000, requireLink = true) {
+    // Helper to detect if parsed JSON contains at least one stream link
+    const hasAnyLink = (obj) => {
+        if (!obj || typeof obj !== 'object') return false;
+        for (const k of Object.keys(obj)) {
+            const arr = Array.isArray(obj[k]) ? obj[k] : [];
+            for (const item of arr) {
+                if (item && item.link) return true;
+            }
+        }
+        return false;
+    };
+
     const start = Date.now();
     while (Date.now() - start < timeout) {
         try {
@@ -45,7 +57,8 @@ async function fetchShowboxJson(url, timeout = 20000, interval = 3000) {
                 // attempt to parse JSON; if not JSON yet, continue polling
                 try {
                     const json = await res.json();
-                    return json;
+                    // If caller requires at least one link, verify before returning
+                    if (!requireLink || hasAnyLink(json)) return json;
                 } catch (e) {
                     // not JSON yet
                 }
@@ -72,7 +85,9 @@ export default async function handler(req, res) {
 
         const showbox_link = constructShowboxLink(title, runtime, release_date);
 
-        const json = await fetchShowboxJson(showbox_link, 30000, 2000);
+        // Poll the Showbox scraper until it returns JSON that contains at least one stream link.
+        // Match original behavior: poll every 2s up to ~30s.
+        const json = await fetchShowboxJson(showbox_link, 20000, 2000, true);
 
         // If we didn't get JSON, return 502
         if (!json) {
@@ -81,10 +96,15 @@ export default async function handler(req, res) {
 
         // Normalize qualities into an ordered list per server
         // json is expected to be an object with server keys each mapping to an array of {quality, link}
+        // Normalize qualities into an ordered list per server, but only include items
+        // that actually have a link to avoid serving an empty streamUrl.
         const qualitiesPerServer = {};
         Object.keys(json).forEach(server => {
             const arr = Array.isArray(json[server]) ? json[server] : [];
-            qualitiesPerServer[server] = arr.map(item => ({ quality: item.quality, link: item.link }));
+            qualitiesPerServer[server] = arr
+                .filter(item => item && item.link)
+                .map(item => ({ quality: item.quality, link: item.link }));
+            if (qualitiesPerServer[server].length === 0) delete qualitiesPerServer[server];
         });
 
         // Choose default stream: prefer the first ORG quality across servers; else prefer first 1080P; else first available
