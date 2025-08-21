@@ -64,39 +64,6 @@ export default async function handler(req, res) {
     const tmdb = req.query.tmdb || req.query.id || req.query.movie || '';
     if (!tmdb) return res.status(400).json({ error: 'Missing tmdb query parameter' });
 
-        // Fast path: when the client requests the page normally, serve a lightweight HTML
-        // immediately with a small "please wait 30 seconds" overlay and a client-side
-        // fetch that will request the same endpoint with &fetch=1 to get the real data.
-        // The heavy work (TMDB + Showbox polling) remains unchanged and runs only for
-        // the fetch=1 request.
-        if (!req.query.fetch) {
-                const { serveHtml } = await import('./shared/html');
-                const loadingOverlay = `
-<div id="please-wait-overlay" style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.65);color:#fff;z-index:9999;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;">
-    <div style="background:#111;padding:16px 20px;border-radius:8px;text-align:center;min-width:180px;">
-        <div style="font-size:16px;margin-bottom:8px;">Please wait 30 seconds</div>
-        <div id="please-wait-countdown" style="font-size:12px;opacity:0.9;">30</div>
-    </div>
-</div>
-<script>
-(function(){
-    var t=30;var el;try{el=document.getElementById('please-wait-countdown');}catch(e){}
-    function tick(){ if(el) el.textContent = t; t--; if(t<0) clearInterval(iv); }
-    tick(); var iv = setInterval(tick,1000);
-    // Ask the server for the real data (heavy work) without blocking initial page load
-    fetch(location.pathname + location.search + '&fetch=1').then(function(r){ return r.json(); }).then(function(data){
-        try{ if(data.pageTitle) window.__PLAYER_TITLE__ = data.pageTitle; }catch(e){}
-        try{ if(data.subtitles) window.__SUBTITLES__ = data.subtitles; }catch(e){}
-        try{ if(data.qualities) window.__QUALITIES__ = data.qualities; }catch(e){}
-        try{ if(data.streamUrl){ window.source = data.streamUrl; window.dispatchEvent(new Event('source-ready')); } }catch(e){}
-        var o=document.getElementById('please-wait-overlay'); if(o) o.parentNode.removeChild(o);
-    }).catch(function(){ var o=document.getElementById('please-wait-overlay'); if(o) o.querySelector('div').textContent='Still working...'; });
-})();
-</script>
-                `;
-                return serveHtml(res, 'index.html', { loadingOverlay });
-        }
-
     try {
         const movie = await getMovieData(String(tmdb));
         const title = movie.title || movie.original_title || '';
