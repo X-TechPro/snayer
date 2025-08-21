@@ -1,53 +1,12 @@
 // Stream sniffing utilities for /api endpoints
 import puppeteer from 'puppeteer-core';
 
-// Hardcoded free TMDB API key (per request)
-const TMDB_API_KEY = 'eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI2ZWFjNjM1ODA4YmRjMDJkZjI2ZDMwMjk0MGI0Y2EzNyIsIm5iZiI6MTc0ODY4NTIxNy43Mjg5OTk5LCJzdWIiOiI2ODNhZDFhMTkyMWI4N2IxYzk1Mzc4ODQiLCJzY29wZXMiOlsiYXBpX3JlYWQiXSwidmVyc2lvbiI6MX0.w-oWdRIxwlXKTpP42Yo87Mld5sqp8uNFpDHgrqB6a3U';
-
-// Fetch TMDB details for movie or tv and return title, year and runtime
-async function fetchTmdbDetails(type, tmdb_id) {
-    try {
-        const base = 'https://api.themoviedb.org/3';
-        const url = type === 'tv' ? `${base}/tv/${tmdb_id}?language=en-US&api_key=${TMDB_API_KEY}` : `${base}/movie/${tmdb_id}?language=en-US&api_key=${TMDB_API_KEY}`;
-        const res = await fetch(url, { headers: { accept: 'application/json' } });
-        if (!res.ok) return null;
-        const obj = await res.json();
-        if (!obj) return null;
-
-        let title = '';
-        let date = '';
-        let runtime = '';
-        if (type === 'tv') {
-            title = obj.name || obj.original_name || '';
-            date = obj.first_air_date || obj.last_air_date || '';
-            // tv runtime is an array of episode runtimes; take first if available
-            if (Array.isArray(obj.episode_run_time) && obj.episode_run_time.length) {
-                runtime = String(obj.episode_run_time[0]);
-            }
-        } else {
-            title = obj.title || obj.original_title || '';
-            date = obj.release_date || '';
-            if (typeof obj.runtime === 'number') runtime = String(obj.runtime);
-        }
-
-        const year = date ? (date.split('-')[0] || '') : '';
-        // sanitize title for URL (basic)
-        const safeTitle = encodeURIComponent((title || '').replace(/\s+/g, ' ').trim());
-        return { title: safeTitle, year, runtime };
-    } catch (e) {
-        return null;
-    }
-}
+// (Removed TMDB fetch logic — ShowBox-specific TMDB usage moved to dedicated /api/showbox)
 
 export async function getProviders(type, tmdb_id, season = 1, episode = 1) {
-    const details = await fetchTmdbDetails(type, tmdb_id);
-    const title = details?.title || '';
-    const year = details?.year || '';
-    const runtime = details?.runtime || '';
-
+    // No TMDB lookup here — provider URLs are constructed from the tmdb_id alone.
     if (type === 'tv') {
         return [
-            { name: 'ShowBox', url: `https://showbox-five.vercel.app/api/scrape?title=${title}&year=${year}&rt=${runtime}&type=2` },
             { name: 'VidEasy', url: `https://player.videasy.net/tv/${tmdb_id}/${season}/${episode}` },
             { name: 'VidPro', url: `https://player.vidpro.top/embed/tv/${tmdb_id}/${season}/${episode}` },
             { name: 'AutoEmbed', url: `https://player.autoembed.cc/embed/tv/${tmdb_id}/${season}/${episode}` },
@@ -57,7 +16,6 @@ export async function getProviders(type, tmdb_id, season = 1, episode = 1) {
     }
     // Default to movie
     return [
-        { name: 'ShowBox', url: `https://showbox-five.vercel.app/api/scrape?title=${title}&year=${year}&rt=${runtime}&type=1` },
         { name: 'VidPro', url: `https://player.vidpro.top/embed/movie/${tmdb_id}` },
         { name: 'AutoEmbed', url: `https://player.autoembed.cc/embed/movie/${tmdb_id}` },
         { name: 'VidEasy', url: `https://player.videasy.net/movie/${tmdb_id}` },
@@ -76,53 +34,9 @@ export async function sniffStreamUrl(type, tmdb_id, browserlessToken, onStatus, 
         if (onStatus) onStatus(i, 'loading');
         let finalUrl = null;
         try {
-            // Special-case ShowBox: open via fetch and poll for JSON (no puppeteer)
-            if (provider.name === 'ShowBox' || provider.url.includes('showbox')) {
-                // Kick off an initial GET to the ShowBox URL (may trigger backend generation)
-                try { await fetch(provider.url, { method: 'GET' }); } catch (e) { /* ignore */ }
-
-                const deadline = Date.now() + 20000; // 20 seconds
-                let json = null;
-                while (Date.now() < deadline) {
-                    try {
-                        const res = await fetch(provider.url, { headers: { accept: 'application/json' } });
-                        if (res && res.ok) {
-                            const text = await res.text();
-                            try {
-                                const obj = JSON.parse(text);
-                                if (obj && typeof obj === 'object') {
-                                    json = obj;
-                                    break;
-                                }
-                            } catch (e) {
-                                // response not JSON yet
-                            }
-                        }
-                    } catch (e) {
-                        // ignore fetch errors while polling
-                    }
-                    // wait 3s before next check
-                    await new Promise(r => setTimeout(r, 3000));
-                }
-
-                if (json) {
-                    // Flatten all server arrays into one list of sources
-                    const all = [];
-                    Object.values(json).forEach(arr => { if (Array.isArray(arr)) all.push(...arr); });
-                    const findQuality = q => all.find(item => item && item.quality && String(item.quality).toLowerCase() === String(q).toLowerCase());
-                    let pick = findQuality('ORG') || findQuality('1080P') || findQuality('1080p');
-                    if (!pick && all.length) pick = all[0];
-                    finalUrl = pick?.link || null;
-                }
-
-                // Completed or errored for ShowBox branch
-                if (finalUrl) {
-                    if (onStatus) onStatus(i, 'completed', finalUrl);
-                    return finalUrl;
-                } else {
-                    if (onStatus) onStatus(i, 'error');
-                    continue; // try next provider
-                }
+            // Ensure browserless token is provided before using puppeteer
+            if (!browserWSEndpoint) {
+                throw new Error('Missing BROWSERLESS_TOKEN environment variable or api param.');
             }
             const browser = await puppeteer.connect({ browserWSEndpoint });
             const page = await browser.newPage();

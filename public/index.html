@@ -298,9 +298,15 @@
             </button>
 
             <!-- settings -->
-            <button class="text-white hover:text-[#0099ff] transition-all">
-              <i data-lucide="settings" class="lucide w-6 h-6"></i>
-            </button>
+            <div class="relative">
+              <button id="settings-btn" class="text-white hover:text-[#0099ff] transition-all">
+                <i data-lucide="settings" class="lucide w-6 h-6"></i>
+              </button>
+              <div id="settings-menu" style="display:none; position:absolute; right:0; bottom:100%; margin-bottom:8px; background:rgba(0,0,0,0.85); backdrop-filter:blur(8px); border-radius:8px; box-shadow:0 8px 30px #0008; z-index:120; padding:8px; min-width:220px; max-height:320px; overflow:auto;">
+                <div style="color:#fff; font-weight:700; padding:6px 8px;">Quality / Server</div>
+                <div id="settings-list" style="color:#fff;"></div>
+              </div>
+            </div>
 
             <!-- fullscreen -->
             <button id="fullscreen" class="text-white hover:text-[#0099ff] transition-all">
@@ -994,6 +1000,115 @@
           subtitleDisplay.style.borderRadius = '0';
           subtitleDisplay.style.padding = '0';
         }
+      });
+      // --- Quality / Settings menu and runtime source switching ---
+      // Helper to set the player's source at runtime (supports mp4 and m3u8)
+      function setPlayerSource(url) {
+        if (!url) return;
+        const isM3U8 = url.endsWith('.m3u8') || /[?&]m3u8=1(?:&|$)/.test(url);
+        // Remove any Hls instances (simple approach: replace video element)
+        const parent = video.parentElement;
+        const newVideo = video.cloneNode(false);
+        parent.replaceChild(newVideo, video);
+        // Rebind event listeners minimally: timeupdate, loadedmetadata, volumechange, waiting/playing
+        newVideo.addEventListener('timeupdate', updateSeekbarUI);
+        newVideo.addEventListener('loadedmetadata', () => { timeLabel.textContent = `0:00 / ${formatTime(newVideo.duration)}`; updateIcons(); });
+        newVideo.addEventListener('volumechange', updateIcons);
+        newVideo.addEventListener('waiting', () => showSpinner(true));
+        newVideo.addEventListener('playing', () => showSpinner(false));
+        newVideo.addEventListener('canplay', () => showSpinner(false));
+        newVideo.addEventListener('canplaythrough', () => showSpinner(false));
+        newVideo.addEventListener('seeking', () => showSpinner(true));
+        newVideo.addEventListener('seeked', () => showSpinner(false));
+        // replace reference
+        window.video = video = newVideo;
+        // set source
+        while (video.firstChild) video.removeChild(video.firstChild);
+        video.removeAttribute('src');
+        if (isM3U8) {
+          if (video.canPlayType('application/vnd.apple.mpegurl')) {
+            video.src = url;
+          } else if (window.Hls) {
+            const hls = new Hls();
+            hls.loadSource(url);
+            hls.attachMedia(video);
+          } else {
+            video.outerHTML = '<div class="text-white p-8">Your browser does not support HLS playback.</div>';
+            return;
+          }
+        } else {
+          const sourceEl = document.createElement('source');
+          sourceEl.src = url;
+          sourceEl.type = 'video/mp4';
+          video.appendChild(sourceEl);
+          video.load();
+        }
+        video.play().catch(() => {});
+      }
+
+      // Render qualities/settings if injected
+      function renderSettingsMenu() {
+        const qualities = window.__QUALITIES__ || null;
+        const settingsBtn = document.getElementById('settings-btn');
+        const settingsMenu = document.getElementById('settings-menu');
+        const settingsList = document.getElementById('settings-list');
+        if (!settingsBtn || !settingsMenu || !settingsList) return;
+        settingsList.innerHTML = '';
+        if (!qualities) {
+          const p = document.createElement('div');
+          p.style.color = '#bbb';
+          p.style.padding = '6px 8px';
+          p.textContent = 'No qualities available';
+          settingsList.appendChild(p);
+          return;
+        }
+        // qualities is an object: server -> [{quality, link}, ...]
+        Object.keys(qualities).forEach(server => {
+          // Separator / server label
+          const sep = document.createElement('div');
+          sep.style.padding = '6px 8px';
+          sep.style.borderTop = '1px solid rgba(255,255,255,0.06)';
+          sep.style.fontWeight = '700';
+          sep.style.color = '#fff';
+          sep.textContent = server;
+          settingsList.appendChild(sep);
+          const arr = qualities[server] || [];
+          arr.forEach(q => {
+            const a = document.createElement('a');
+            a.href = '#';
+            a.style.display = 'block';
+            a.style.padding = '6px 8px';
+            a.style.color = '#ddd';
+            a.style.textDecoration = 'none';
+            a.onmouseenter = () => { a.style.background = 'rgba(255,255,255,0.03)'; };
+            a.onmouseleave = () => { a.style.background = 'transparent'; };
+            a.textContent = (q.quality || 'auto') + ' — ' + (q.link ? q.link.replace(/^https?:\/\//, '').slice(0, 60) : 'no link');
+            a.onclick = function(e) { e.preventDefault(); if (q.link) setPlayerSource(q.link); settingsMenu.style.display = 'none'; };
+            settingsList.appendChild(a);
+          });
+        });
+      }
+
+      // Toggle settings menu
+      document.addEventListener('DOMContentLoaded', function() {
+        const settingsBtn = document.getElementById('settings-btn');
+        const settingsMenu = document.getElementById('settings-menu');
+        if (!settingsBtn || !settingsMenu) return;
+        settingsBtn.addEventListener('click', function(e) {
+          e.preventDefault();
+          if (settingsMenu.style.display === 'block') {
+            settingsMenu.style.display = 'none';
+          } else {
+            renderSettingsMenu();
+            settingsMenu.style.display = 'block';
+          }
+        });
+        // close on click outside
+        document.addEventListener('click', function(ev) {
+          if (!settingsMenu.contains(ev.target) && ev.target !== settingsBtn) {
+            settingsMenu.style.display = 'none';
+          }
+        });
       });
     </script>
     <style>

@@ -74,15 +74,51 @@ export default async function handler(req, res) {
 
         const json = await fetchShowboxJson(showbox_link, 20000, 3000);
 
-        return res.status(200).json({
-            tmdb_id: String(tmdb),
-            title,
-            runtime,
-            release_date,
-            showbox_link,
-            json_received: json !== null,
-            json
+        // If we didn't get JSON, return 502
+        if (!json) {
+            return res.status(502).json({ error: 'Failed to retrieve showbox JSON' });
+        }
+
+        // Normalize qualities into an ordered list per server
+        // json is expected to be an object with server keys each mapping to an array of {quality, link}
+        const qualitiesPerServer = {};
+        Object.keys(json).forEach(server => {
+            const arr = Array.isArray(json[server]) ? json[server] : [];
+            qualitiesPerServer[server] = arr.map(item => ({ quality: item.quality, link: item.link }));
         });
+
+        // Choose default stream: prefer the first ORG quality across servers; else prefer first 1080P; else first available
+        let defaultLink = null;
+        // Search for ORG
+        for (const server of Object.keys(qualitiesPerServer)) {
+            const found = qualitiesPerServer[server].find(q => String(q.quality).toUpperCase() === 'ORG');
+            if (found && found.link) { defaultLink = found.link; break; }
+        }
+        if (!defaultLink) {
+            for (const server of Object.keys(qualitiesPerServer)) {
+                const found = qualitiesPerServer[server].find(q => String(q.quality).toUpperCase().includes('1080'));
+                if (found && found.link) { defaultLink = found.link; break; }
+            }
+        }
+        if (!defaultLink) {
+            // fallback to first link found
+            outer: for (const server of Object.keys(qualitiesPerServer)) {
+                for (const q of qualitiesPerServer[server]) {
+                    if (q.link) { defaultLink = q.link; break outer; }
+                }
+            }
+        }
+
+        // Serve player page and inject qualities + selected stream
+        const { serveHtml } = await import('./shared/html');
+        // Build options for serveHtml: streamUrl is defaultLink, qualities object for settings, pageTitle
+        const options = {
+            streamUrl: defaultLink || '',
+            qualities: qualitiesPerServer,
+            pageTitle: title,
+            subtitles: []
+        };
+        return serveHtml(res, 'index.html', options);
     } catch (e) {
         const status = e && e.status ? e.status : 500;
         const body = e && e.body ? e.body : undefined;
