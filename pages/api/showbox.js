@@ -43,13 +43,23 @@ async function fetchShowboxJson(url, timeout = 30000, interval = 2000, requireLi
     };
 
     const start = Date.now();
+    let lastStatus = null;
+    let lastText = null;
     while (Date.now() - start < timeout) {
         try {
             const controller = new AbortController();
-            const t = setTimeout(() => controller.abort(), 10000);
+            const t = setTimeout(() => controller.abort(), 20000);
             let res;
             try {
                 res = await fetch(url, { signal: controller.signal });
+                // capture last status/text for diagnostics (non-fatal)
+                try {
+                    lastStatus = res && res.status;
+                    // clone so we don't consume the stream the main code will read
+                    lastText = await (res && res.clone && res.clone().text ? res.clone().text() : Promise.resolve(null));
+                } catch (e) {
+                    // ignore clone/read errors
+                }
             } finally {
                 clearTimeout(t);
             }
@@ -71,6 +81,10 @@ async function fetchShowboxJson(url, timeout = 30000, interval = 2000, requireLi
         // wait interval before next try
         await new Promise(r => setTimeout(r, interval));
     }
+    // log diagnostic context for why we timed out trying to get JSON
+    try {
+        console.error('Showbox polling timed out', { url, timeout, lastStatus, lastText: lastText && lastText.slice ? lastText.slice(0, 200) : lastText });
+    } catch (e) {}
     return null;
 }
 
@@ -84,12 +98,13 @@ export default async function handler(req, res) {
         const runtime = typeof movie.runtime === 'number' ? movie.runtime : 0;
         const release_date = movie.release_date || '';
 
-    const api = req.query.api || '';
-    const showbox_link = constructShowboxLink(title, runtime, release_date, api);
+        const api = req.query.api || '';
+        const showbox_link = constructShowboxLink(title, runtime, release_date, api);
 
         // Poll the Showbox scraper until it returns JSON that contains at least one stream link.
         // Match original behavior: poll every 2s up to ~30s.
-        const json = await fetchShowboxJson(showbox_link, 20000, 2000, true);
+        console.log('Polling Showbox scraper URL', showbox_link, 'tmdb', tmdb);
+        const json = await fetchShowboxJson(showbox_link, 30000, 2000, false);
 
         // If we didn't get JSON, return 502
         if (!json) {
@@ -149,6 +164,8 @@ export default async function handler(req, res) {
         };
         return serveHtml(res, 'index.html', options);
     } catch (e) {
+    // surface errors to logs for easier debugging
+    try { console.error('showbox handler error', e && e.message ? e.message : e, e && e.body ? { body: e.body } : undefined); } catch (err) {}
         const status = e && e.status ? e.status : 500;
         const body = e && e.body ? e.body : undefined;
         return res.status(status).json({ error: e.message || 'Unknown error', details: body });
