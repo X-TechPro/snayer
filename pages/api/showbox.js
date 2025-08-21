@@ -22,10 +22,11 @@ async function getMovieData(tmdb_id) {
     return res.json();
 }
 
-function constructShowboxLink(title, runtime, release_date) {
+function constructShowboxLink(title, runtime, release_date, api) {
     const year = release_date ? String(release_date).split('-')[0] : '';
     const safeTitle = encodeURIComponent(title || '');
-    return `https://showbox-five.vercel.app/api/scrape?title=${safeTitle}&year=${year}&rt=${runtime || 0}&type=1`;
+    const apiParam = api ? `&api=${encodeURIComponent(api)}` : '';
+    return `https://showbox-five.vercel.app/api/scrape?title=${safeTitle}&year=${year}&rt=${runtime || 0}&type=1${apiParam}`;
 }
 
 async function fetchShowboxJson(url, timeout = 30000, interval = 2000, requireLink = true) {
@@ -83,7 +84,8 @@ export default async function handler(req, res) {
         const runtime = typeof movie.runtime === 'number' ? movie.runtime : 0;
         const release_date = movie.release_date || '';
 
-        const showbox_link = constructShowboxLink(title, runtime, release_date);
+    const api = req.query.api || '';
+    const showbox_link = constructShowboxLink(title, runtime, release_date, api);
 
         // Poll the Showbox scraper until it returns JSON that contains at least one stream link.
         // Match original behavior: poll every 2s up to ~30s.
