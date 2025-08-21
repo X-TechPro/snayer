@@ -12,6 +12,11 @@
     <!-- Add Inter font from Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@700;900&display=swap" rel="stylesheet">
     <style>
+  /* Settings menu card tweaks */
+  #settings-list button { font-family: 'Inter', Arial, sans-serif; font-weight:700; }
+  /* Subtitle visual when empty should remain hidden but take layout */
+  #subtitle-display.empty { display: none; }
+
       html, body {
         margin: 0;
         padding: 0;
@@ -302,9 +307,11 @@
               <button id="settings-btn" class="text-white hover:text-[#0099ff] transition-all relative group flex items-center">
                 <i data-lucide="settings" class="lucide w-6 h-6"></i>
               </button>
-              <div id="settings-menu" style="display:none; position:absolute; right:0; bottom:100%; margin-bottom:8px; background:rgba(0,0,0,0.85); backdrop-filter:blur(8px); border-radius:8px; box-shadow:0 8px 30px #0008; z-index:120; padding:8px; min-width:220px; max-height:320px; overflow:auto;">
-                <div style="color:#fff; font-weight:700; padding:6px 8px;">Quality / Server</div>
-                <div id="settings-list" style="color:#fff;"></div>
+              <div id="settings-menu" style="display:none; position:absolute; right:0; bottom:100%; margin-bottom:8px; background:transparent; z-index:120; padding:8px; min-width:260px; max-height:360px; overflow:auto;">
+                <div style="background:rgba(0,0,0,0.85); backdrop-filter:blur(10px); border-radius:10px; box-shadow:0 12px 40px #0008; padding:10px;">
+                  <div style="color:#fff; font-weight:700; padding:6px 8px;">Quality / Server</div>
+                  <div id="settings-list" style="color:#fff;"></div>
+                </div>
               </div>
             </div>
 
@@ -464,14 +471,17 @@
       });
 
       // seekbar & time
-      video.addEventListener("timeupdate", () => {
+      function onVideoTimeUpdate() {
         if (!isNaN(video.duration) && video.duration > 0) {
           seekbar.value = (video.currentTime / video.duration) * 100;
         } else {
           seekbar.value = 0;
         }
         timeLabel.textContent = `${formatTime(video.currentTime)} / ${formatTime(video.duration)}`;
-      });
+        // keep the visual seekbar elements in sync as well
+        try { updateSeekbarUI(); } catch (e) {}
+      }
+      video.addEventListener('timeupdate', onVideoTimeUpdate);
       seekbar.addEventListener("input", () => {
         if (!isNaN(video.duration) && video.duration > 0) {
           video.currentTime = (seekbar.value / 100) * video.duration;
@@ -671,10 +681,12 @@
 
 
       // init
-      video.addEventListener("loadedmetadata", () => {
+      function onLoadedMetadata() {
         timeLabel.textContent = `0:00 / ${formatTime(video.duration)}`;
         updateIcons();
-      });
+        try { updateSeekbarUI(); } catch (e) {}
+      }
+      video.addEventListener('loadedmetadata', onLoadedMetadata);
 
       // --- Spinner show/hide on buffering ---
       function showSpinner(show) {
@@ -846,25 +858,32 @@
       updateSubtitleFontSize();
       document.getElementById('player-container').appendChild(subtitleDisplay);
 
-      // Helper: Parse SRT to cues (no regex literals)
+      // Helper: Parse SRT or WebVTT to cues
       function parseSRT(srt) {
-        // Split by double newlines, then parse each block
-        var blocks = srt.replace(/\r/g, '').split(/\n\n+/);
+        var txt = srt.replace(/\r/g, '');
         var cues = [];
+        // If WebVTT header present, remove it
+        if (txt.trim().toLowerCase().indexOf('webvtt') === 0) {
+          txt = txt.replace(/^[^\n]*\n/, '');
+        }
+        // Split by double newlines (blocks)
+        var blocks = txt.split(/\n\n+/);
         for (var i = 0; i < blocks.length; i++) {
-          var lines = blocks[i].split('\n');
-          if (lines.length >= 2) {
-            var timeLine = lines[1];
-            var timeMatch = timeLine && timeLine.indexOf('-->') !== -1 ? timeLine.split('-->') : null;
-            if (timeMatch && timeMatch.length === 2) {
-              var start = toSeconds(timeMatch[0].trim());
-              var end = toSeconds(timeMatch[1].trim());
-              // Fix weird emoji/encoding: decode as UTF-8 and normalize
-              var text = lines.slice(2).join('<br>');
-              try { text = decodeURIComponent(escape(text)).normalize('NFC'); } catch(e) {}
-              cues.push({ start: start, end: end, text: text });
-            }
-          }
+          var lines = blocks[i].split('\n').filter(Boolean);
+          if (lines.length === 0) continue;
+          // If first line looks like a numeric index, drop it
+          if (/^\d+$/.test(lines[0])) lines.shift();
+          // Find the time line (contains -->)
+          var timeLine = lines.find(function(l) { return l.indexOf('-->') !== -1; });
+          if (!timeLine) continue;
+          var parts = timeLine.split('-->');
+          if (parts.length !== 2) continue;
+          var start = toSeconds(parts[0].trim());
+          var end = toSeconds(parts[1].trim());
+          var textLines = lines.slice(lines.indexOf(timeLine) + 1);
+          var text = textLines.join('<br>');
+          try { text = decodeURIComponent(escape(text)).normalize('NFC'); } catch(e) {}
+          cues.push({ start: start, end: end, text: text });
         }
         return cues;
       }
@@ -978,12 +997,34 @@
         currentSubtitle = sub;
         subtitleCues = [];
         subtitleDisplay.innerHTML = '';
+        // keep styling even if empty
+        subtitleDisplay.style.background = 'none';
+        subtitleDisplay.style.backdropFilter = 'none';
+        subtitleDisplay.style.borderRadius = '0';
+        subtitleDisplay.style.padding = '0';
         if (!sub) { if (forceImmediateIcon) renderSubtitleMenu(); return; }
         var url = sub.file || sub.url;
         if (!url) { if (forceImmediateIcon) renderSubtitleMenu(); return; }
-        fetch(url).then(function(r) { return r.text(); }).then(function(srt) {
-          subtitleCues = parseSRT(srt);
+        // try to fetch subtitles; support SRT and VTT
+        fetch(url).then(function(r) {
+          if (!r.ok) throw new Error('Failed to fetch subtitle');
+          return r.text();
+        }).then(function(text) {
+          // If content looks like JSON with an inner data field, attempt to extract
+          if (text.trim().startsWith('{') && text.indexOf('data') !== -1) {
+            try { var parsed = JSON.parse(text); if (parsed && parsed.data) text = parsed.data; } catch(e) {}
+          }
+          subtitleCues = parseSRT(text || '');
+          // Immediately render menu icon state
           if (forceImmediateIcon) renderSubtitleMenu();
+        }).catch(function(err) {
+          // Try fetching via a simple proxy path (server may provide) if direct fetch fails
+          try {
+            fetch('/api/proxy?url=' + encodeURIComponent(url)).then(function(r2) { return r2.text(); }).then(function(t2) {
+              subtitleCues = parseSRT(t2 || '');
+              if (forceImmediateIcon) renderSubtitleMenu();
+            }).catch(function() { if (forceImmediateIcon) renderSubtitleMenu(); });
+          } catch(e) { if (forceImmediateIcon) renderSubtitleMenu(); }
         });
       }
       // Show subtitle for current time
@@ -1062,10 +1103,11 @@
         const parent = video.parentElement;
         const newVideo = video.cloneNode(false);
         parent.replaceChild(newVideo, video);
-        // Rebind event listeners minimally: timeupdate, loadedmetadata, volumechange, waiting/playing
-        newVideo.addEventListener('timeupdate', updateSeekbarUI);
-        newVideo.addEventListener('loadedmetadata', () => { timeLabel.textContent = `0:00 / ${formatTime(newVideo.duration)}`; updateIcons(); });
-        newVideo.addEventListener('volumechange', updateIcons);
+  // Rebind event listeners minimally: timeupdate, loadedmetadata, volumechange, waiting/playing
+  newVideo.addEventListener('timeupdate', onVideoTimeUpdate);
+  newVideo.addEventListener('timeupdate', updateSeekbarUI);
+  newVideo.addEventListener('loadedmetadata', onLoadedMetadata);
+  newVideo.addEventListener('volumechange', updateIcons);
         newVideo.addEventListener('waiting', () => showSpinner(true));
         newVideo.addEventListener('playing', () => showSpinner(false));
         newVideo.addEventListener('canplay', () => showSpinner(false));
@@ -1140,35 +1182,64 @@
         }
         // qualities is an object: server -> [{quality, link}, ...]
         Object.keys(qualities).forEach(server => {
-          // Separator / server label
-          const sep = document.createElement('div');
-          sep.style.padding = '6px 8px';
-          sep.style.borderTop = '1px solid rgba(255,255,255,0.06)';
-          sep.style.fontWeight = '700';
-          sep.style.color = '#fff';
-          sep.textContent = server;
-          settingsList.appendChild(sep);
+          const serverCard = document.createElement('div');
+          serverCard.style.margin = '6px 4px';
+          serverCard.style.padding = '8px';
+          serverCard.style.borderRadius = '8px';
+          serverCard.style.background = 'linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01))';
+          serverCard.style.border = '1px solid rgba(255,255,255,0.04)';
+          // header
+          const header = document.createElement('div');
+          header.style.display = 'flex';
+          header.style.justifyContent = 'space-between';
+          header.style.alignItems = 'center';
+          const title = document.createElement('div');
+          title.textContent = server;
+          title.style.color = '#fff';
+          title.style.fontWeight = '700';
+          title.style.fontSize = '0.95rem';
+          header.appendChild(title);
+          serverCard.appendChild(header);
+          // list
+          const list = document.createElement('div');
+          list.style.marginTop = '6px';
           const arr = qualities[server] || [];
           arr.forEach(q => {
-            const a = document.createElement('a');
-            a.href = '#';
-            a.style.display = 'block';
-            a.style.padding = '6px 8px';
-            a.style.color = '#ddd';
-            a.style.textDecoration = 'none';
-            a.onmouseenter = () => { a.style.background = 'rgba(255,255,255,0.03)'; };
-            a.onmouseleave = () => { a.style.background = 'transparent'; };
+            const row = document.createElement('button');
+            row.type = 'button';
+            row.style.display = 'flex';
+            row.style.justifyContent = 'space-between';
+            row.style.alignItems = 'center';
+            row.style.width = '100%';
+            row.style.padding = '8px';
+            row.style.marginBottom = '4px';
+            row.style.borderRadius = '6px';
+            row.style.border = 'none';
+            row.style.background = 'transparent';
+            row.style.color = '#ddd';
+            row.style.cursor = 'pointer';
+            row.onmouseenter = () => { row.style.background = 'rgba(255,255,255,0.03)'; };
+            row.onmouseleave = () => { row.style.background = 'transparent'; };
+            const label = document.createElement('span');
+            label.textContent = q.quality || 'auto';
+            label.style.textAlign = 'left';
             // check if this is the currently playing entry
             const current = window.__CURRENT_PLAYING__ || {};
             const isCurrent = (current.link && q.link && current.link === q.link) || (current.server === server && current.quality === q.quality);
-            a.textContent = (q.quality || 'auto');
+            const check = document.createElement('span');
+            check.style.width = '18px';
             if (isCurrent) {
-              a.innerHTML = '<span style="color:white;">' + (q.quality || 'auto') + '</span><i data-lucide="check" class="lucide w-4 h-4 ml-1 align-middle" style="color:#0099ff; float:right;"></i>';
+              check.innerHTML = '<i data-lucide="check" class="lucide w-4 h-4" style="color:#0099ff"></i>';
             }
-            a.onclick = function(e) { e.preventDefault(); if (q.link) setPlayerSource(q.link, server, q.quality); settingsMenu.style.display = 'none'; renderSettingsMenu(); };
-            settingsList.appendChild(a);
+            row.appendChild(label);
+            row.appendChild(check);
+            row.onclick = function(e) { e.preventDefault(); if (q.link) { setPlayerSource(q.link, server, q.quality); settingsMenu.style.display = 'none'; } renderSettingsMenu(); };
+            list.appendChild(row);
           });
+          serverCard.appendChild(list);
+          settingsList.appendChild(serverCard);
         });
+        lucide.createIcons();
       }
 
       // Toggle settings menu
