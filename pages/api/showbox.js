@@ -42,44 +42,52 @@ async function fetchShowboxJson(url, timeout = 30000, interval = 2000, requireLi
         return false;
     };
 
-    const start = Date.now();
+    // Instead of aggressively polling every few seconds, perform a single
+    // long-lived fetch and wait up to `timeout` ms for the scraper to return
+    // an OK (200) response. This reduces hammering the scraper while keeping
+    // the original timeout semantics.
     let lastStatus = null;
     let lastText = null;
-    while (Date.now() - start < timeout) {
+    try {
+        const controller = new AbortController();
+        // Use the provided timeout as the request-level timeout so the fetch
+        // will abort if the scraper doesn't respond within that window.
+        const t = setTimeout(() => controller.abort(), timeout);
+        let res;
         try {
-            const controller = new AbortController();
-            const t = setTimeout(() => controller.abort(), 20000);
-            let res;
+            res = await fetch(url, { signal: controller.signal });
+            // capture last status/text for diagnostics (non-fatal)
             try {
-                res = await fetch(url, { signal: controller.signal });
-                // capture last status/text for diagnostics (non-fatal)
-                try {
-                    lastStatus = res && res.status;
-                    // clone so we don't consume the stream the main code will read
-                    lastText = await (res && res.clone && res.clone().text ? res.clone().text() : Promise.resolve(null));
-                } catch (e) {
-                    // ignore clone/read errors
-                }
-            } finally {
-                clearTimeout(t);
+                lastStatus = res && res.status;
+                lastText = await (res && res.clone && res.clone().text ? res.clone().text() : Promise.resolve(null));
+            } catch (e) {
+                // ignore clone/read errors
             }
-
-            if (res && res.ok) {
-                // attempt to parse JSON; if not JSON yet, continue polling
-                try {
-                    const json = await res.json();
-                    // If caller requires at least one link, verify before returning
-                    if (!requireLink || hasAnyLink(json)) return json;
-                } catch (e) {
-                    // not JSON yet
-                }
-            }
-        } catch (e) {
-            // network or abort; ignore and retry until timeout
+        } finally {
+            clearTimeout(t);
         }
 
-        // wait interval before next try
-        await new Promise(r => setTimeout(r, interval));
+        // Return parsed JSON only if we got an OK response and the JSON meets
+        // the caller's requirements (i.e., contains links when required).
+        if (res && res.ok) {
+            try {
+                const json = await res.json();
+                if (!requireLink || hasAnyLink(json)) return json;
+            } catch (e) {
+                // not JSON or parse error — fallthrough to return null
+            }
+        } else {
+            // non-200 response — log diagnostics and return null so callers
+            // can handle this as a failure (matches prior behavior on timeout)
+            try {
+                console.error('Showbox wait finished with non-200', { url, status: lastStatus, lastText: lastText && lastText.slice ? lastText.slice(0, 200) : lastText });
+            } catch (e) {}
+            return null;
+        }
+    } catch (e) {
+        // network error or abort
+        try { console.error('Showbox fetch error', e && e.message ? e.message : e); } catch (err) {}
+        return null;
     }
     // log diagnostic context for why we timed out trying to get JSON
     try {
