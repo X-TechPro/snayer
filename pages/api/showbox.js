@@ -1,6 +1,6 @@
 // API: /api/showbox?tmdb={id}
 // Translated from the provided Python script: fetch TMDB movie data, construct ShowBox URL,
-// poll it for up to 20s (every 3s) until JSON is returned, then respond with the JSON and metadata.
+// wait up to ~30s for a 200 OK with JSON, then respond with the JSON and metadata.
 
 const TMDB_API_TOKEN = 'eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI2ZWFjNjM1ODA4YmRjMDJkZjI2ZDMwMjk0MGI0Y2EzNyIsIm5iZiI6MTc0ODY4NTIxNy43Mjg5OTk5LCJzdWIiOiI2ODNhZDFhMTkyMWI4N2IxYzk1Mzc4ODQiLCJzY29wZXMiOlsiYXBpX3JlYWQiXSwidmVyc2lvbiI6MX0.w-oWdRIxwlXKTpP42Yo87Mld5sqp8uNFpDHgrqB6a3U';
 
@@ -22,14 +22,32 @@ async function getMovieData(tmdb_id) {
     return res.json();
 }
 
-function constructShowboxLink(title, runtime, release_date, api) {
+async function getTvData(tmdb_id) {
+    const url = `https://api.themoviedb.org/3/tv/${tmdb_id}?language=en-US`;
+    const headers = {
+        accept: 'application/json',
+        Authorization: `Bearer ${TMDB_API_TOKEN}`
+    };
+
+    const res = await fetch(url, { headers });
+    if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        const err = new Error(`TMDB error ${res.status}`);
+        err.status = res.status;
+        err.body = text;
+        throw err;
+    }
+    return res.json();
+}
+
+function constructShowboxLink(title, runtime, release_date, api, type = 1) {
     const year = release_date ? String(release_date).split('-')[0] : '';
     const safeTitle = encodeURIComponent(title || '');
     const apiParam = api ? `&api=${encodeURIComponent(api)}` : '';
-    return `https://showbox-five.vercel.app/api/scrape?title=${safeTitle}&year=${year}&rt=${runtime || 0}&type=1${apiParam}`;
+    return `https://showbox-five.vercel.app/api/scrape?title=${safeTitle}&year=${year}&rt=${runtime || 0}&type=${type}${apiParam}`;
 }
 
-async function fetchShowboxJson(url, timeout = 30000, interval = 2000, requireLink = true) {
+async function fetchShowboxJson(url, timeout = 30000, requireLink = true) {
     // Helper to detect if parsed JSON contains at least one stream link
     const hasAnyLink = (obj) => {
         if (!obj || typeof obj !== 'object') return false;
@@ -91,7 +109,7 @@ async function fetchShowboxJson(url, timeout = 30000, interval = 2000, requireLi
     }
     // log diagnostic context for why we timed out trying to get JSON
     try {
-        console.error('Showbox polling timed out', { url, timeout, lastStatus, lastText: lastText && lastText.slice ? lastText.slice(0, 200) : lastText });
+        console.error('Showbox 200 wait timed out', { url, timeout, lastStatus, lastText: lastText && lastText.slice ? lastText.slice(0, 200) : lastText });
     } catch (e) {}
     return null;
 }
@@ -101,55 +119,103 @@ export default async function handler(req, res) {
     if (!tmdb) return res.status(400).json({ error: 'Missing tmdb query parameter' });
 
     try {
-        const movie = await getMovieData(String(tmdb));
-        const title = movie.title || movie.original_title || '';
-        const runtime = typeof movie.runtime === 'number' ? movie.runtime : 0;
-        const release_date = movie.release_date || '';
-
+        const type = Number(req.query.type || 1);
         const api = req.query.api || '';
-        const showbox_link = constructShowboxLink(title, runtime, release_date, api);
+        let title = '';
+        let runtime = 0;
+        let release_date = '';
 
-        // Poll the Showbox scraper until it returns JSON that contains at least one stream link.
-        // Match original behavior: poll every 2s up to ~30s.
-        console.log('Polling Showbox scraper URL', showbox_link, 'tmdb', tmdb);
-        const json = await fetchShowboxJson(showbox_link, 30000, 2000, false);
+        if (type === 2) {
+            const tv = await getTvData(String(tmdb));
+            title = tv.name || tv.original_name || '';
+            // episode_run_time can be array
+            const ert = Array.isArray(tv.episode_run_time) ? tv.episode_run_time[0] : tv.episode_run_time;
+            runtime = typeof ert === 'number' ? ert : 0;
+            release_date = tv.first_air_date || '';
+        } else {
+            const movie = await getMovieData(String(tmdb));
+            title = movie.title || movie.original_title || '';
+            runtime = typeof movie.runtime === 'number' ? movie.runtime : 0;
+            release_date = movie.release_date || '';
+        }
+
+        const showbox_link = constructShowboxLink(title, runtime, release_date, api, type === 2 ? 2 : 1);
+
+        // Wait for the Showbox scraper to return 200 OK with JSON (up to ~30s).
+        console.log('Waiting for Showbox 200 at URL', showbox_link, 'tmdb', tmdb, 'type', type);
+        const json = await fetchShowboxJson(showbox_link, 30000, false);
 
         // If we didn't get JSON, return 502
         if (!json) {
             return res.status(502).json({ error: 'Failed to retrieve showbox JSON' });
         }
 
-        // Normalize qualities into an ordered list per server
-        // json is expected to be an object with server keys each mapping to an array of {quality, link}
-        // Normalize qualities into an ordered list per server, but only include items
-        // that actually have a link to avoid serving an empty streamUrl.
-        const qualitiesPerServer = {};
-        Object.keys(json).forEach(server => {
-            const arr = Array.isArray(json[server]) ? json[server] : [];
-            qualitiesPerServer[server] = arr
+        let qualitiesPerServer = {};
+        let defaultLink = null;
+
+        if (type === 2) {
+            // TV: json structure: { seasons: [ { season_number, episodes: [ { episode: 'e01', links: [ {quality, link}, ... ] } ] } ] }
+            const s = Number(req.query.s || req.query.season || 1);
+            const e = Number(req.query.e || req.query.episode || 1);
+
+            const seasons = Array.isArray(json.seasons) ? json.seasons : [];
+            let seasonObj = seasons.find(sea => Number(sea.season_number) === s) || seasons[0];
+            const eps = seasonObj && Array.isArray(seasonObj.episodes) ? seasonObj.episodes : [];
+
+            const parseEpisodeNum = (val) => {
+                if (val == null) return null;
+                if (typeof val === 'number') return val;
+                const m = String(val).match(/e(\d+)/i);
+                return m ? Number(m[1]) : Number(val);
+            };
+            let episodeObj = eps.find(ep => parseEpisodeNum(ep.episode) === e) || eps[0];
+            const links = episodeObj && Array.isArray(episodeObj.links) ? episodeObj.links : [];
+
+            const server = 'showbox';
+            qualitiesPerServer[server] = links
                 .filter(item => item && item.link)
                 .map(item => ({ quality: item.quality, link: item.link }));
             if (qualitiesPerServer[server].length === 0) delete qualitiesPerServer[server];
-        });
 
-        // Choose default stream: prefer the first ORG quality across servers; else prefer first 1080P; else first available
-        let defaultLink = null;
-        // Search for ORG
-        for (const server of Object.keys(qualitiesPerServer)) {
-            const found = qualitiesPerServer[server].find(q => String(q.quality).toUpperCase() === 'ORG');
-            if (found && found.link) { defaultLink = found.link; break; }
-        }
-        if (!defaultLink) {
+            // pick default
+            const findDefault = () => {
+                const list = qualitiesPerServer[server] || [];
+                let f = list.find(q => String(q.quality).toUpperCase() === 'ORG');
+                if (f && f.link) return f.link;
+                f = list.find(q => String(q.quality).toUpperCase().includes('1080'));
+                if (f && f.link) return f.link;
+                return list.length ? list[0].link : null;
+            };
+            defaultLink = findDefault();
+        } else {
+            // Movie: servers object
+            // Normalize qualities into an ordered list per server, but only include items that have a link
+            Object.keys(json).forEach(server => {
+                const arr = Array.isArray(json[server]) ? json[server] : [];
+                qualitiesPerServer[server] = arr
+                    .filter(item => item && item.link)
+                    .map(item => ({ quality: item.quality, link: item.link }));
+                if (qualitiesPerServer[server].length === 0) delete qualitiesPerServer[server];
+            });
+
+            // Choose default stream: prefer ORG -> 1080 -> first
+            // Search for ORG
             for (const server of Object.keys(qualitiesPerServer)) {
-                const found = qualitiesPerServer[server].find(q => String(q.quality).toUpperCase().includes('1080'));
+                const found = qualitiesPerServer[server].find(q => String(q.quality).toUpperCase() === 'ORG');
                 if (found && found.link) { defaultLink = found.link; break; }
             }
-        }
-        if (!defaultLink) {
-            // fallback to first link found
-            outer: for (const server of Object.keys(qualitiesPerServer)) {
-                for (const q of qualitiesPerServer[server]) {
-                    if (q.link) { defaultLink = q.link; break outer; }
+            if (!defaultLink) {
+                for (const server of Object.keys(qualitiesPerServer)) {
+                    const found = qualitiesPerServer[server].find(q => String(q.quality).toUpperCase().includes('1080'));
+                    if (found && found.link) { defaultLink = found.link; break; }
+                }
+            }
+            if (!defaultLink) {
+                // fallback to first link found
+                outer: for (const server of Object.keys(qualitiesPerServer)) {
+                    for (const q of qualitiesPerServer[server]) {
+                        if (q.link) { defaultLink = q.link; break outer; }
+                    }
                 }
             }
         }
@@ -163,7 +229,6 @@ export default async function handler(req, res) {
 
         // Serve player page and inject qualities + selected stream
         const { serveHtml } = await import('./shared/html');
-        // Build options for serveHtml: streamUrl is defaultLink, qualities object for settings, pageTitle
         const options = {
             streamUrl: defaultLink || '',
             qualities: qualitiesPerServer,
