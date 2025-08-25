@@ -4,6 +4,24 @@
 
 const TMDB_API_TOKEN = 'eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI2ZWFjNjM1ODA4YmRjMDJkZjI2ZDMwMjk0MGI0Y2EzNyIsIm5iZiI6MTc0ODY4NTIxNy43Mjg5OTk5LCJzdWIiOiI2ODNhZDFhMTkyMWI4N2IxYzk1Mzc4ODQiLCJzY29wZXMiOlsiYXBpX3JlYWQiXSwidmVyc2lvbiI6MX0.w-oWdRIxwlXKTpP42Yo87Mld5sqp8uNFpDHgrqB6a3U';
 
+async function fetchSubtitles(tmdbId, season, episode) {
+    try {
+        const url = `https://sub.wyzie.ru/search?id=${tmdbId}&season=${season}&episode=${episode}`;
+        const response = await fetch(url);
+        if (!response.ok) return [];
+        
+        const subtitles = await response.json();
+        return subtitles.map(sub => ({
+            url: sub.url,
+            language: sub.language,
+            display: sub.display
+        }));
+    } catch (error) {
+        console.error('Error fetching subtitles:', error);
+        return [];
+    }
+}
+
 async function getMovieData(tmdb_id) {
     const url = `https://api.themoviedb.org/3/movie/${tmdb_id}?language=en-US`;
     const headers = {
@@ -177,6 +195,9 @@ export default async function handler(req, res) {
                 .map(item => ({ quality: item.quality, link: item.link }));
             if (qualitiesPerServer[server].length === 0) delete qualitiesPerServer[server];
 
+            // Fetch subtitles for the episode
+            const subtitles = await fetchSubtitles(tmdb, s, e);
+
             // pick default
             const findDefault = () => {
                 const list = qualitiesPerServer[server] || [];
@@ -187,6 +208,11 @@ export default async function handler(req, res) {
                 return list.length ? list[0].link : null;
             };
             defaultLink = findDefault();
+            
+            // Add subtitles to the response
+            if (subtitles.length > 0) {
+                qualitiesPerServer.subtitles = subtitles;
+            }
         } else {
             // Movie: servers object
             // Normalize qualities into an ordered list per server, but only include items that have a link
