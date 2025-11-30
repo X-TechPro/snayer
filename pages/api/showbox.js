@@ -9,7 +9,7 @@ async function fetchSubtitles(tmdbId, season, episode) {
         const url = `https://sub.wyzie.ru/search?id=${tmdbId}&season=${season}&episode=${episode}`;
         const response = await fetch(url);
         if (!response.ok) return [];
-        
+
         const subtitles = await response.json();
         return subtitles.map(sub => ({
             url: sub.url,
@@ -117,18 +117,18 @@ async function fetchShowboxJson(url, timeout = 30000, requireLink = true) {
             // can handle this as a failure (matches prior behavior on timeout)
             try {
                 console.error('Showbox wait finished with non-200', { url, status: lastStatus, lastText: lastText && lastText.slice ? lastText.slice(0, 200) : lastText });
-            } catch (e) {}
+            } catch (e) { }
             return null;
         }
     } catch (e) {
         // network error or abort
-        try { console.error('Showbox fetch error', e && e.message ? e.message : e); } catch (err) {}
+        try { console.error('Showbox fetch error', e && e.message ? e.message : e); } catch (err) { }
         return null;
     }
     // log diagnostic context for why we timed out trying to get JSON
     try {
         console.error('Showbox 200 wait timed out', { url, timeout, lastStatus, lastText: lastText && lastText.slice ? lastText.slice(0, 200) : lastText });
-    } catch (e) {}
+    } catch (e) { }
     return null;
 }
 
@@ -208,7 +208,7 @@ export default async function handler(req, res) {
                 return list.length ? list[0].link : null;
             };
             defaultLink = findDefault();
-            
+
             // Add subtitles to the response
             if (subtitles.length > 0) {
                 qualitiesPerServer.subtitles = subtitles;
@@ -249,9 +249,15 @@ export default async function handler(req, res) {
         // Fetch subtitles (same logic as stream.js)
         let subtitles = [];
         try {
-            const subRes = await fetch(`https://madplay.site/api/subtitle?id=${tmdb}`);
+            let subUrl = `https://madplay.site/api/subtitle?id=${tmdb}`;
+            if (type === 2) {
+                const s = req.query.s || req.query.season || 1;
+                const e = req.query.e || req.query.episode || 1;
+                subUrl = `https://madplay.site/api/subtitle?id=${tmdb}&season=${s}&episode=${e}`;
+            }
+            const subRes = await fetch(subUrl);
             if (subRes.ok) subtitles = await subRes.json();
-        } catch (e) {}
+        } catch (e) { }
 
         // Serve player page and inject qualities + selected stream
         const { serveHtml } = await import('./shared/html');
@@ -263,8 +269,8 @@ export default async function handler(req, res) {
         };
         return serveHtml(res, 'index.html', options);
     } catch (e) {
-    // surface errors to logs for easier debugging
-    try { console.error('showbox handler error', e && e.message ? e.message : e, e && e.body ? { body: e.body } : undefined); } catch (err) {}
+        // surface errors to logs for easier debugging
+        try { console.error('showbox handler error', e && e.message ? e.message : e, e && e.body ? { body: e.body } : undefined); } catch (err) { }
         const status = e && e.status ? e.status : 500;
         const body = e && e.body ? e.body : undefined;
         return res.status(status).json({ error: e.message || 'Unknown error', details: body });
