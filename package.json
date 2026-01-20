@@ -3,7 +3,7 @@
     "axios": "^1.9.0",
     "cors": "^2.8.5",
     "fs": "0.0.1-security",
-    "next": "^15.3.2",
+    "next": "15.3.8",
     "node-fetch": "^3.3.2",
     "path": "^0.12.7",
     "puppeteer-core": "^24.9.0",
